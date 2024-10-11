@@ -5,3 +5,4 @@ pyotp
 pandas
 ta
 requests
+fear-and-greed

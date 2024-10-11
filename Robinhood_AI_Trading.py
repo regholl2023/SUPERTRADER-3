@@ -6,14 +6,14 @@ import pandas as pd
 from openai import OpenAI
 import json
 import requests
+import fear_and_greed
+from deep_translator import GoogleTranslator
 
 def main():
     login = get_login()
     NVDA_monthly_df, NVDA_daily_df = get_nvidia_chart_data(login)
-
-    print(NVDA_monthly_df)
-    # AI_result = openAI_response(NVDA_monthly_df, NVDA_daily_df)
-    # send_slack_message(AI_result)
+    AI_result, fgi = openAI_response(NVDA_monthly_df, NVDA_daily_df)
+    send_slack_message(AI_result, fgi)
 
 def get_login():
     load_dotenv()
@@ -66,9 +66,28 @@ def get_nvidia_chart_data(login):
 
     return monthly_df, daily_df
 
+def get_fear_and_greed_index():
+    fgi = fear_and_greed.get()
+    return {
+        "value": fgi.value,
+        "description": fgi.description,
+        "last_update": fgi.last_update.isoformat()
+    }
+
+def translate_to_korean(text):
+    try:
+        translator = GoogleTranslator(source='auto', target='ko')
+        return translator.translate(text)
+    except Exception as e:
+        print(f"번역 중 오류 발생: {e}")
+        return text  # 번역 실패 시 원본 텍스트 반환
+
 
 def openAI_response(monthly_df, daily_df):
     client = OpenAI()
+
+    # 공포 탐욕 지수 가져오기
+    fgi = get_fear_and_greed_index()
 
     response = client.chat.completions.create(
       model="gpt-4o",
@@ -81,19 +100,35 @@ def openAI_response(monthly_df, daily_df):
           "role": "user",
           "content": json.dumps({
               "monthly_data": monthly_df.to_json(),
-              "daily_data": daily_df.to_json()
+              "daily_data": daily_df.to_json(),
+              "fear_and_greed_index": fgi
           })
         }
       ],
       response_format={"type": "json_object"}
     )
     result = json.loads(response.choices[0].message.content)
-    return result
 
-def send_slack_message(ai_result):
+    # 결과 한국어로 번역
+    result['decision_kr'] = translate_to_korean(result['decision'])
+    result['reason_kr'] = translate_to_korean(result['reason'])
+    return result, fgi
+
+
+def send_slack_message(ai_result, fgi):
     load_dotenv()
     webhook_url = os.getenv("SLACK_WEBHOOK_URL")
-    message = f"AI Trading Decision for NVIDIA:\nDecision: {ai_result['decision']}\nReason: {ai_result['reason']}"
+    message = f"""AI Trading Decision for NVIDIA:
+    Decision: {ai_result['decision']}
+    결정: {ai_result['decision_kr']}
+    Reason: {ai_result['reason']}
+    이유: {ai_result['reason_kr']}
+
+    Fear and Greed Index:
+    Value: {fgi['value']}
+    Description: {fgi['description']}
+    Last Update: {fgi['last_update']}"""
+
     payload = {
         "text": message
     }
@@ -103,6 +138,7 @@ def send_slack_message(ai_result):
         print(f"Failed to send Slack message. Status code: {response.status_code}")
     else:
         print("Slack message sent successfully")
+
 
 if __name__ == "__main__":
     main()
