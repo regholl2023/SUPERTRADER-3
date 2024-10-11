@@ -2,16 +2,18 @@ import os
 import pyotp
 import robin_stocks as r
 from dotenv import load_dotenv
-import datetime
 import pandas as pd
 from openai import OpenAI
 import json
+import requests
 
 def main():
     login = get_login()
-    NVDA_df= get_nvidia_chart_data(login)
-    AI_result = openAI_request(NVDA_df)
-    print(AI_result)
+    NVDA_monthly_df, NVDA_daily_df = get_nvidia_chart_data(login)
+
+    print(NVDA_monthly_df)
+    # AI_result = openAI_response(NVDA_monthly_df, NVDA_daily_df)
+    # send_slack_message(AI_result)
 
 def get_login():
     load_dotenv()
@@ -27,45 +29,45 @@ def get_login():
 
 def get_nvidia_chart_data(login):
     symbol = "NVDA"
-    interval = "day"
-    span = "month"
-    bounds = "regular"
 
-    # 현재 날짜로부터 30일 전의 날짜 계산
-    end_date = datetime.datetime.now().date()
-    start_date = end_date - datetime.timedelta(days=30)
-
-    historicals = r.robinhood.stocks.get_stock_historicals(
+    # 월간 데이터 가져오기
+    monthly_historicals = r.robinhood.stocks.get_stock_historicals(
         symbol,
-        interval=interval,
-        span=span,
-        bounds=bounds,
-        info=None
+        interval="day",
+        span="month",
+        bounds="regular"
     )
 
-    # 데이터프레임 생성
-    df = pd.DataFrame(historicals)
+    # 일간 데이터 가져오기
+    daily_historicals = r.robinhood.stocks.get_stock_historicals(
+        symbol,
+        interval="5minute",
+        span="day",
+        bounds="regular"
+    )
 
-    # 필요한 컬럼만 선택
-    df = df[['begins_at', 'open_price', 'close_price', 'high_price', 'low_price', 'volume']]
+    # 데이터프레임 생성 및 처리 함수
+    def process_df(historicals):
+        df = pd.DataFrame(historicals)
+        df = df[['begins_at', 'open_price', 'close_price', 'high_price', 'low_price', 'volume']]
+        df['begins_at'] = pd.to_datetime(df['begins_at'])
+        for col in ['open_price', 'close_price', 'high_price', 'low_price']:
+            df[col] = df[col].astype(float)
+        df['volume'] = df['volume'].astype(int)
+        df.columns = ['Date', 'Open', 'Close', 'High', 'Low', 'Volume']
+        df.set_index('Date', inplace=True)
+        return df
 
-    # 데이터 타입 변환
-    df['begins_at'] = pd.to_datetime(df['begins_at']).dt.date
-    for col in ['open_price', 'close_price', 'high_price', 'low_price']:
-        df[col] = df[col].astype(float)
-    df['volume'] = df['volume'].astype(int)
+    monthly_df = process_df(monthly_historicals)
+    daily_df = process_df(daily_historicals)
 
-    # 컬럼 이름 변경
-    df.columns = ['Date', 'Open', 'Close', 'High', 'Low', 'Volume']
+    print(f"NVIDIA 30일 차트 데이터: {len(monthly_df)} 행")
+    print(f"NVIDIA 당일 차트 데이터: {len(daily_df)} 행")
 
-    # 인덱스를 Date로 설정
-    df.set_index('Date', inplace=True)
-
-    print(f"NVIDIA 30일 차트 데이터 ({start_date} ~ {end_date}):")
-    return df
+    return monthly_df, daily_df
 
 
-def openAI_request(df):
+def openAI_response(monthly_df, daily_df):
     client = OpenAI()
 
     response = client.chat.completions.create(
@@ -73,31 +75,34 @@ def openAI_request(df):
       messages=[
         {
           "role": "system",
-          "content": [
-            {
-              "type": "text",
-              "text": "You are an expert in Stock investing. Tell me whether to buy, sell or hold at the moment based on the chart data provided. response in json format.\n\nResponse Example:\n{\"decision\":\"buy\",\"reason\":\"some technical reason\"}\n{\"decision\":\"sell\",\"reason\":\"some technical reason\"}\n{\"decision\":\"hold\",\"reason\":\"some technical reason\"}"
-            }
-          ]
+          "content": "You are an expert in Stock investing. Tell me whether to buy, sell or hold at the moment based on the monthly and daily chart data provided. Response in json format.\n\nResponse Example:\n{\"decision\":\"buy\",\"reason\":\"some technical reason based on both monthly and daily data\"}"
         },
         {
           "role": "user",
-          "content": [
-            {
-              "type": "text",
-              "text": df.to_json()
-            }
-          ]
+          "content": json.dumps({
+              "monthly_data": monthly_df.to_json(),
+              "daily_data": daily_df.to_json()
+          })
         }
       ],
-      response_format={
-        "type": "json_object"
-      }
+      response_format={"type": "json_object"}
     )
-
     result = json.loads(response.choices[0].message.content)
     return result
 
+def send_slack_message(ai_result):
+    load_dotenv()
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL")
+    message = f"AI Trading Decision for NVIDIA:\nDecision: {ai_result['decision']}\nReason: {ai_result['reason']}"
+    payload = {
+        "text": message
+    }
+    response = requests.post(webhook_url, json=payload)
+
+    if response.status_code != 200:
+        print(f"Failed to send Slack message. Status code: {response.status_code}")
+    else:
+        print("Slack message sent successfully")
 
 if __name__ == "__main__":
     main()

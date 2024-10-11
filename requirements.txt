@@ -3,3 +3,5 @@ openai
 robin_stocks
 pyotp
 pandas
+ta
+requests
