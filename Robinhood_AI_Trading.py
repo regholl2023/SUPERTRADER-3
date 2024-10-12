@@ -9,10 +9,15 @@ import requests
 import fear_and_greed
 from deep_translator import GoogleTranslator
 
+
+
+
+
 def main():
     login = get_login()
     NVDA_monthly_df, NVDA_daily_df = get_nvidia_chart_data(login)
-    AI_result, fgi = openAI_response(NVDA_monthly_df, NVDA_daily_df)
+    NVDA_news = get_nvidia_news()
+    AI_result, fgi = openAI_response(NVDA_monthly_df, NVDA_daily_df,NVDA_news)
     send_slack_message(AI_result, fgi)
 
 def get_login():
@@ -74,6 +79,55 @@ def get_fear_and_greed_index():
         "last_update": fgi.last_update.isoformat()
     }
 
+def get_nvidia_news():
+    # SearchApi 키
+    load_dotenv()
+    SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
+
+    # SearchApi 엔드포인트 URL
+    url = "https://www.searchapi.io/api/v1/search"
+
+    # 검색 매개변수 설정
+    params = {
+        "api_key": SERPAPI_API_KEY,
+        "engine": "google_news",  # Google News 엔진 사용
+        "q": "nvidia",
+        "num": 5  # 상위 5개 결과만 가져오기
+    }
+
+    # 헤더 설정
+    headers = {
+        "Accept": "application/json"
+    }
+    try:
+        # GET 요청 보내기
+        response = requests.get(url, params=params, headers=headers)
+
+        # 응답 상태 확인
+        response.raise_for_status()
+
+        # JSON 응답 파싱
+        data = response.json()
+
+        # 뉴스 제목과 날짜만 추출
+        news_items = []
+        for result in data.get('organic_results', [])[:5]:
+            news_items.append({
+                'title': result['title'],
+                'date': result['date']
+            })
+
+        return news_items
+
+    except requests.RequestException as e:
+        print(f"API 요청 중 오류 발생: {e}")
+    except json.JSONDecodeError:
+        print("JSON 파싱 오류")
+    except KeyError as e:
+        print(f"예상치 못한 응답 구조: {e}")
+
+    return []
+
 def translate_to_korean(text):
     try:
         translator = GoogleTranslator(source='auto', target='ko')
@@ -83,7 +137,7 @@ def translate_to_korean(text):
         return text  # 번역 실패 시 원본 텍스트 반환
 
 
-def openAI_response(monthly_df, daily_df):
+def openAI_response(monthly_df, daily_df, NVDA_news):
     client = OpenAI()
 
     # 공포 탐욕 지수 가져오기
@@ -101,13 +155,20 @@ def openAI_response(monthly_df, daily_df):
           "content": json.dumps({
               "monthly_data": monthly_df.to_json(),
               "daily_data": daily_df.to_json(),
-              "fear_and_greed_index": fgi
+              "fear_and_greed_index": fgi,
+              "nvidia_news":NVDA_news
           })
         }
       ],
       response_format={"type": "json_object"}
     )
     result = json.loads(response.choices[0].message.content)
+
+    print(json.dumps({
+              "monthly_data": monthly_df.to_json(),
+              "daily_data": daily_df.to_json(),
+              "fear_and_greed_index": fgi,
+              "nvidia_news":NVDA_news}))
 
     # 결과 한국어로 번역
     result['decision_kr'] = translate_to_korean(result['decision'])
