@@ -25,6 +25,9 @@ class StockAnalyzer:
         self.logger = self._setup_logger()
         self.login = self._get_login()
         self.openai_client = OpenAI()
+        self.balance = 1000
+        self.shares = 0
+        self.position_value = 0.0
 
     def _setup_logger(self):
         logger = logging.getLogger(f"{self.symbol}_analyzer")
@@ -293,7 +296,53 @@ class StockAnalyzer:
 
         self._send_slack_message(result, reason_kr, all_news_title, fgi)
 
+        shares_to_trade = self.calculate_shares_to_trade(result.percentage)
+
+        if result.decision == "buy":
+            self.buy(shares_to_trade)
+
+        elif result.decision == "sell":
+            shares_to_sell = min(shares_to_trade, self.shares)
+            self.sell(shares_to_sell)
+        else:  # hold
+            self.logger.info("Holding current position")
+
+        self.logger.info(f"Current balance: ${self.balance:.2f}")
+        self.logger.info(f"Current shares: {self.shares}")
+        self.logger.info(f"Current position value: ${self.position_value:.2f}")
+
         return result, reason_kr
+
+    def get_current_price(self) -> float:
+        quote = r.robinhood.stocks.get_latest_price(self.symbol)[0]
+        return float(quote)
+
+
+    def calculate_shares_to_trade(self, percentage: int) -> int:
+        current_price = self.get_current_price()
+        if percentage == 0:
+            return 0
+        trade_value = self.balance * (percentage / 100)
+        return int(trade_value / current_price)
+
+    def buy(self, shares: int):
+        try:
+            self.logger.info(f"Buy order placed for {shares} shares of {self.symbol}")
+            self.shares += shares
+            self.balance -= shares * self.get_current_price()
+            self.position_value = self.shares * self.get_current_price()
+        except Exception as e:
+            self.logger.error(f"Error placing buy order: {e}")
+
+    def sell(self, shares: int):
+        try:
+            self.logger.info(f"Sell order placed for {shares} shares of {self.symbol}")
+            self.shares -= shares
+            self.balance += shares * self.get_current_price()
+            self.position_value = self.shares * self.get_current_price()
+        except Exception as e:
+            self.logger.error(f"Error placing sell order: {e}")
+
 
     def _translate_to_korean(self, text):
         self.logger.info("Translating text to Korean")
