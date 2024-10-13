@@ -20,7 +20,6 @@ class TradingDecision(BaseModel):
     decision: str
     reason: str
 
-
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -28,9 +27,10 @@ logger = logging.getLogger(__name__)
 
 def main():
     login = get_login()
-    result = openAI_response(login)
+    result, reason_kr = openAI_response(login)
     logger.info(f"Trading Decision: {result.decision}")
     logger.info(f"Reason: {result.reason}")
+    logger.info(f"Reason in Korean: {reason_kr}")
 
 
 def get_login():
@@ -209,13 +209,14 @@ def get_youtube_transcript():
         return f"An error occurred: {str(e)}"
 
 
-def send_slack_message(result, fgi):
+def send_slack_message(result, reason_kr, fgi):
     logger.info("Preparing to send Slack message")
     load_dotenv()
     webhook_url = os.getenv("SLACK_WEBHOOK_URL")
     message = f"""AI Trading Decision for NVIDIA:
     Decision: {result.decision}
     Reason: {result.reason}
+    Reason_KO: {reason_kr}
 
     Fear and Greed Index:
     Value: {fgi['value']}
@@ -297,14 +298,14 @@ def openAI_response(login):
     logger.info("Received response from OpenAI")
 
     # 결과 한국어로 번역
-    # result.reason_kr = translate_to_korean(result.reason)
+    reason_kr = translate_to_korean(result.reason)
 
     logger.info(f"### AI Decision: {result.decision.upper()} ###")
     logger.info(f"### Reason: {result.reason} ###")
 
-    send_slack_message(result, fgi)
+    send_slack_message(result,reason_kr, fgi)
 
-    return result
+    return result, reason_kr
 
 
 if __name__ == "__main__":
