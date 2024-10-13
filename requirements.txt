@@ -10,5 +10,5 @@ beautifulsoup4
 selenium
 webdriver-manager
 youtube-transcript-api
-Pillow
 logging
+sqlite3

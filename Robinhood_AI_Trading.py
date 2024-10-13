@@ -11,8 +11,9 @@ from deep_translator import GoogleTranslator
 from datetime import datetime
 import logging
 from youtube_transcript_api import YouTubeTranscriptApi
-from pydantic import BaseModel, Field
-from typing import List, Dict, Any
+from pydantic import BaseModel
+import sqlite3
+from typing import Dict, Any
 
 class TradingDecision(BaseModel):
     decision: str
@@ -25,9 +26,76 @@ class AIStockTrading:
         self.logger = self._setup_logger()
         self.login = self._get_login()
         self.openai_client = OpenAI()
-        self.balance = 1000
-        self.shares = 0
-        self.position_value = 0.0
+        self.db_connection = self._setup_database()
+        self.balance = self._get_initial_balance()
+        self.shares = self._get_initial_shares()
+        self.position_value = self._calculate_position_value()
+
+
+    def _setup_database(self):
+        conn = sqlite3.connect('trading_data.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS trading_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT,
+            timestamp DATETIME,
+            decision TEXT,
+            percentage INTEGER,
+            reason TEXT,
+            balance REAL,
+            shares INTEGER,
+            position_value REAL
+        )
+        ''')
+        conn.commit()
+        return conn
+
+    def _get_initial_balance(self):
+        cursor = self.db_connection.cursor()
+        cursor.execute('SELECT balance FROM trading_records ORDER BY timestamp DESC LIMIT 1')
+        result = cursor.fetchone()
+        return result[0] if result else 1000
+
+    def _get_initial_shares(self):
+        cursor = self.db_connection.cursor()
+        cursor.execute('SELECT shares FROM trading_records WHERE symbol = ? ORDER BY timestamp DESC LIMIT 1',
+                       (self.symbol,))
+        result = cursor.fetchone()
+        return result[0] if result else 0
+
+    def _calculate_position_value(self):
+        current_price = self.get_current_price()
+        return self.shares * current_price
+
+
+    def _record_trading_decision(self, decision: Dict[str, Any]):
+        timestamp = datetime.now().isoformat()
+        cursor = self.db_connection.cursor()
+        cursor.execute('''
+        INSERT INTO trading_records 
+        (symbol, timestamp, decision, percentage, reason, balance, shares, position_value)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            self.symbol,
+            timestamp,
+            decision['decision'],
+            decision['percentage'],
+            decision['reason'],
+            self.balance,
+            self.shares,
+            self.position_value
+        ))
+        self.db_connection.commit()
+
+    def get_trading_history(self):
+        cursor = self.db_connection.cursor()
+        cursor.execute('SELECT * FROM trading_records WHERE symbol = ? ORDER BY timestamp DESC', (self.symbol,))
+        return cursor.fetchall()
+
+    def __del__(self):
+        if hasattr(self, 'db_connection'):
+            self.db_connection.close()
 
     def _setup_logger(self):
         logger = logging.getLogger(f"{self.symbol}_analyzer")
@@ -300,7 +368,6 @@ class AIStockTrading:
 
         if result.decision == "buy":
             self.buy(shares_to_trade)
-
         elif result.decision == "sell":
             shares_to_sell = min(shares_to_trade, self.shares)
             self.sell(shares_to_sell)
@@ -310,6 +377,13 @@ class AIStockTrading:
         self.logger.info(f"Current balance: ${self.balance:.2f}")
         self.logger.info(f"Current shares: {self.shares}")
         self.logger.info(f"Current position value: ${self.position_value:.2f}")
+
+        # Record the trading decision and current state
+        self._record_trading_decision({
+            'decision': result.decision,
+            'percentage': result.percentage,
+            'reason': result.reason
+        })
 
         return result, reason_kr
 
@@ -327,22 +401,23 @@ class AIStockTrading:
 
     def buy(self, shares: int):
         try:
+            current_price = self.get_current_price()
             self.logger.info(f"Buy order placed for {shares} shares of {self.symbol}")
             self.shares += shares
-            self.balance -= shares * self.get_current_price()
-            self.position_value = self.shares * self.get_current_price()
+            self.balance -= shares * current_price
+            self.position_value = self.shares * current_price
         except Exception as e:
             self.logger.error(f"Error placing buy order: {e}")
 
     def sell(self, shares: int):
         try:
+            current_price = self.get_current_price()
             self.logger.info(f"Sell order placed for {shares} shares of {self.symbol}")
             self.shares -= shares
-            self.balance += shares * self.get_current_price()
-            self.position_value = self.shares * self.get_current_price()
+            self.balance += shares * current_price
+            self.position_value = self.shares * current_price
         except Exception as e:
             self.logger.error(f"Error placing sell order: {e}")
-
 
     def _translate_to_korean(self, text):
         self.logger.info("Translating text to Korean")
@@ -386,6 +461,12 @@ def main(symbol: str):
     print(f"Percentage: {result.percentage}")
     print(f"Reason: {result.reason}")
     print(f"Korean Reason: {reason_kr}")
+
+    # 거래 내역 조회
+    trading_history = analyzer.get_trading_history()
+    print("Trading History:")
+    for record in trading_history:
+        print(record)
 
 if __name__ == "__main__":
     symbol = str(input("Enter stock symbol: "))
