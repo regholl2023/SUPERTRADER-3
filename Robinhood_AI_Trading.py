@@ -15,6 +15,7 @@ from pydantic import BaseModel
 import sqlite3
 from typing import Dict, Any
 
+
 class TradingDecision(BaseModel):
     decision: str
     percentage: int
@@ -29,7 +30,7 @@ class AIStockTrading:
         self.db_connection = self._setup_database()
         self.balance = self._get_initial_balance()
         self.shares = self._get_initial_shares()
-        self.position_value = self._calculate_position_value()
+        self.trading_value = self._calculate_trading_value()
 
 
     def _setup_database(self):
@@ -45,7 +46,7 @@ class AIStockTrading:
             reason TEXT,
             balance REAL,
             shares INTEGER,
-            position_value REAL
+            trading_value REAL
         )
         ''')
         conn.commit()
@@ -64,7 +65,7 @@ class AIStockTrading:
         result = cursor.fetchone()
         return result[0] if result else 0
 
-    def _calculate_position_value(self):
+    def _calculate_trading_value(self):
         current_price = self.get_current_price()
         return self.shares * current_price
 
@@ -74,7 +75,7 @@ class AIStockTrading:
         cursor = self.db_connection.cursor()
         cursor.execute('''
         INSERT INTO trading_records 
-        (symbol, timestamp, decision, percentage, reason, balance, shares, position_value)
+        (symbol, timestamp, decision, percentage, reason, balance, shares, trading_value)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             self.symbol,
@@ -84,7 +85,7 @@ class AIStockTrading:
             decision['reason'],
             self.balance,
             self.shares,
-            self.position_value
+            self.trading_value
         ))
         self.db_connection.commit()
 
@@ -376,7 +377,7 @@ class AIStockTrading:
 
         self.logger.info(f"Current balance: ${self.balance:.2f}")
         self.logger.info(f"Current shares: {self.shares}")
-        self.logger.info(f"Current position value: ${self.position_value:.2f}")
+        self.logger.info(f"Current position value: ${self.trading_value:.2f}")
 
         # Record the trading decision and current state
         self._record_trading_decision({
@@ -405,7 +406,7 @@ class AIStockTrading:
             self.logger.info(f"Buy order placed for {shares} shares of {self.symbol}")
             self.shares += shares
             self.balance -= shares * current_price
-            self.position_value = self.shares * current_price
+            self.trading_value = self.shares * current_price
         except Exception as e:
             self.logger.error(f"Error placing buy order: {e}")
 
@@ -415,7 +416,7 @@ class AIStockTrading:
             self.logger.info(f"Sell order placed for {shares} shares of {self.symbol}")
             self.shares -= shares
             self.balance += shares * current_price
-            self.position_value = self.shares * current_price
+            self.trading_value = self.shares * current_price
         except Exception as e:
             self.logger.error(f"Error placing sell order: {e}")
 

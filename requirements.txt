@@ -12,3 +12,5 @@ webdriver-manager
 youtube-transcript-api
 logging
 sqlite3
+streamlit
+plotly
