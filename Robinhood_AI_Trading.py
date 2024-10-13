@@ -19,7 +19,7 @@ class TradingDecision(BaseModel):
     percentage: int
     reason: str
 
-class StockAnalyzer:
+class AIStockTrading:
     def __init__(self, symbol: str):
         self.symbol = symbol
         self.logger = self._setup_logger()
@@ -212,7 +212,7 @@ class StockAnalyzer:
             self.logger.error(f"Error fetching YouTube transcript: {str(e)}")
             return f"An error occurred: {str(e)}"
 
-    def analyze(self):
+    def ai_trading(self):
         monthly_df, daily_df = self.get_chart_data()
         news = self.get_news()
         all_news_title = self.get_all_news_title(news)
@@ -380,8 +380,8 @@ class StockAnalyzer:
             self.logger.info("Slack message sent successfully")
 
 def main(symbol: str):
-    analyzer = StockAnalyzer(symbol)
-    result, reason_kr = analyzer.analyze()
+    analyzer = AIStockTrading(symbol)
+    result, reason_kr = analyzer.ai_trading()
     print(f"Decision: {result.decision}")
     print(f"Percentage: {result.percentage}")
     print(f"Reason: {result.reason}")
