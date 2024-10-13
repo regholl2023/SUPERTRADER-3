@@ -8,32 +8,49 @@ import json
 import requests
 import fear_and_greed
 from deep_translator import GoogleTranslator
+from datetime import datetime
+import base64
+import logging
+from youtube_transcript_api import YouTubeTranscriptApi
+from pydantic import BaseModel, Field
+from typing import List
 
 
+class TradingDecision(BaseModel):
+    decision: str
+    reason: str
 
+
+# 로깅 설정
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 
 def main():
     login = get_login()
-    NVDA_monthly_df, NVDA_daily_df = get_nvidia_chart_data(login)
-    NVDA_news = get_nvidia_news()
-    AI_result, fgi = openAI_response(NVDA_monthly_df, NVDA_daily_df,NVDA_news)
-    send_slack_message(AI_result, fgi)
+    result = openAI_response(login)
+    logger.info(f"Trading Decision: {result.decision}")
+    logger.info(f"Reason: {result.reason}")
+
 
 def get_login():
     load_dotenv()
+
     username = os.getenv("username")
     password = os.getenv("password")
     totpcode = os.getenv("totpcode")
     totp = pyotp.TOTP(totpcode).now()
-    print("Current OTP:", totp)
+    logger.info(f"Current OTP: {totp}")
 
     login = r.robinhood.login(username, password, mfa_code=totp)
+    logger.info("Successfully logged in to Robinhood")
     return login
 
 
-def get_nvidia_chart_data(login):
+def get_chart_data(login):
     symbol = "NVDA"
+
+    logger.info(f"Fetching chart data for {symbol}")
 
     # 월간 데이터 가져오기
     monthly_historicals = r.robinhood.stocks.get_stock_historicals(
@@ -66,12 +83,14 @@ def get_nvidia_chart_data(login):
     monthly_df = process_df(monthly_historicals)
     daily_df = process_df(daily_historicals)
 
-    print(f"NVIDIA 30일 차트 데이터: {len(monthly_df)} 행")
-    print(f"NVIDIA 당일 차트 데이터: {len(daily_df)} 행")
+    logger.info(f"NVIDIA 30-day chart data: {len(monthly_df)} rows")
+    logger.info(f"NVIDIA daily chart data: {len(daily_df)} rows")
 
     return monthly_df, daily_df
 
+
 def get_fear_and_greed_index():
+    logger.info("Fetching Fear and Greed Index")
     fgi = fear_and_greed.get()
     return {
         "value": fgi.value,
@@ -79,37 +98,71 @@ def get_fear_and_greed_index():
         "last_update": fgi.last_update.isoformat()
     }
 
-def get_nvidia_news():
-    # SearchApi 키
+
+def get_news_from_alpha_vantage():
+    logger.info("Fetching news from Alpha Vantage")
+    load_dotenv()
+    Alpha_Vantage_API_KEY = os.getenv("Alpha_Vantage_API_KEY")
+
+    url = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=NVDA&apikey={Alpha_Vantage_API_KEY}"
+
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+
+        if "feed" not in data:
+            logger.warning("No news data found in Alpha Vantage response")
+            return []
+
+        news_items = []
+        for item in data["feed"][:10]:  # 최대 10개 아이템
+            title = item.get("title", "제목 없음")
+            time_published = item.get("time_published", "날짜 없음")
+
+            # 날짜 형식 변환
+            if time_published != "날짜 없음":
+                dt = datetime.strptime(time_published, "%Y%m%dT%H%M%S")
+                time_published = dt.strftime("%Y-%m-%d %H:%M:%S")
+
+            news_items.append({
+                'title': title,
+                'pubDate': time_published
+            })
+
+        logger.info(f"Retrieved {len(news_items)} news items from Alpha Vantage")
+        return news_items
+
+    except requests.RequestException as e:
+        logger.error(f"Error during Alpha Vantage API request: {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error in get_news_from_alpha_vantage: {e}")
+
+    return []
+
+
+def get_news_from_google():
+    logger.info("Fetching news from Google")
     load_dotenv()
     SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
 
-    # SearchApi 엔드포인트 URL
     url = "https://www.searchapi.io/api/v1/search"
 
-    # 검색 매개변수 설정
     params = {
         "api_key": SERPAPI_API_KEY,
-        "engine": "google_news",  # Google News 엔진 사용
+        "engine": "google_news",
         "q": "nvidia",
-        "num": 5  # 상위 5개 결과만 가져오기
+        "num": 5
     }
 
-    # 헤더 설정
     headers = {
         "Accept": "application/json"
     }
     try:
-        # GET 요청 보내기
         response = requests.get(url, params=params, headers=headers)
-
-        # 응답 상태 확인
         response.raise_for_status()
-
-        # JSON 응답 파싱
         data = response.json()
 
-        # 뉴스 제목과 날짜만 추출
         news_items = []
         for result in data.get('organic_results', [])[:5]:
             news_items.append({
@@ -117,73 +170,52 @@ def get_nvidia_news():
                 'date': result['date']
             })
 
+        logger.info(f"Retrieved {len(news_items)} news items from Google")
         return news_items
 
     except requests.RequestException as e:
-        print(f"API 요청 중 오류 발생: {e}")
+        logger.error(f"Error during Google News API request: {e}")
     except json.JSONDecodeError:
-        print("JSON 파싱 오류")
+        logger.error("JSON parsing error in Google News response")
     except KeyError as e:
-        print(f"예상치 못한 응답 구조: {e}")
+        logger.error(f"Unexpected response structure from Google News: {e}")
 
     return []
 
+
 def translate_to_korean(text):
+    logger.info("Translating text to Korean")
     try:
         translator = GoogleTranslator(source='auto', target='ko')
-        return translator.translate(text)
+        translated = translator.translate(text)
+        logger.info("Translation successful")
+        return translated
     except Exception as e:
-        print(f"번역 중 오류 발생: {e}")
+        logger.error(f"Error during translation: {e}")
         return text  # 번역 실패 시 원본 텍스트 반환
 
 
-def openAI_response(monthly_df, daily_df, NVDA_news):
-    client = OpenAI()
+def get_youtube_transcript():
+    video_id = "TWINrTppUl4"
+    logger.info(f"Fetching YouTube transcript for video ID: {video_id}")
+    try:
+        transcript_data = YouTubeTranscriptApi.get_transcript(video_id)
+        full_transcript = " ".join(item['text'] for item in transcript_data)
+        logger.info(f"Retrieved transcript with {len(full_transcript)} characters")
+        return full_transcript.strip()
 
-    # 공포 탐욕 지수 가져오기
-    fgi = get_fear_and_greed_index()
-
-    response = client.chat.completions.create(
-      model="gpt-4o",
-      messages=[
-        {
-          "role": "system",
-          "content": "You are an expert in Stock investing. Tell me whether to buy, sell or hold at the moment based on the monthly and daily chart data provided. Response in json format.\n\nResponse Example:\n{\"decision\":\"buy\",\"reason\":\"some technical reason based on both monthly and daily data\"}"
-        },
-        {
-          "role": "user",
-          "content": json.dumps({
-              "monthly_data": monthly_df.to_json(),
-              "daily_data": daily_df.to_json(),
-              "fear_and_greed_index": fgi,
-              "nvidia_news":NVDA_news
-          })
-        }
-      ],
-      response_format={"type": "json_object"}
-    )
-    result = json.loads(response.choices[0].message.content)
-
-    print(json.dumps({
-              "monthly_data": monthly_df.to_json(),
-              "daily_data": daily_df.to_json(),
-              "fear_and_greed_index": fgi,
-              "nvidia_news":NVDA_news}))
-
-    # 결과 한국어로 번역
-    result['decision_kr'] = translate_to_korean(result['decision'])
-    result['reason_kr'] = translate_to_korean(result['reason'])
-    return result, fgi
+    except Exception as e:
+        logger.error(f"Error fetching YouTube transcript: {str(e)}")
+        return f"An error occurred: {str(e)}"
 
 
-def send_slack_message(ai_result, fgi):
+def send_slack_message(result, fgi):
+    logger.info("Preparing to send Slack message")
     load_dotenv()
     webhook_url = os.getenv("SLACK_WEBHOOK_URL")
     message = f"""AI Trading Decision for NVIDIA:
-    Decision: {ai_result['decision']}
-    결정: {ai_result['decision_kr']}
-    Reason: {ai_result['reason']}
-    이유: {ai_result['reason_kr']}
+    Decision: {result.decision}
+    Reason: {result.reason}
 
     Fear and Greed Index:
     Value: {fgi['value']}
@@ -196,10 +228,86 @@ def send_slack_message(ai_result, fgi):
     response = requests.post(webhook_url, json=payload)
 
     if response.status_code != 200:
-        print(f"Failed to send Slack message. Status code: {response.status_code}")
+        logger.error(f"Failed to send Slack message. Status code: {response.status_code}")
     else:
-        print("Slack message sent successfully")
+        logger.info("Slack message sent successfully")
+
+
+def openAI_response(login):
+    logger.info("Initiating OpenAI response process")
+    client = OpenAI()
+
+    monthly_df, daily_df = get_chart_data(login)
+    news_google = get_news_from_google()
+    news_alpha_vantage = get_news_from_alpha_vantage()
+    youtube_transcript = get_youtube_transcript()
+    fgi = get_fear_and_greed_index()
+
+    logger.info("Sending request to OpenAI")
+    response = client.chat.completions.create(
+        model="gpt-4o-2024-08-06",
+        messages=[
+            {
+                "role": "system",
+                "content": """You are an expert in Stock investing. Analyze the provided data including technical indicators, market data, recent news headlines, the Fear and Greed Index, YouTube video transcript, and the chart image. Tell me whether to buy, sell, or hold at the moment. Consider the following in your analysis:
+                - Technical indicators and market data
+                - Recent news headlines and their potential impact on Stock price
+                - The Fear and Greed Index and its implications
+                - Overall market sentiment
+                - Insights from the YouTube video transcript
+
+                Respond with a decision (buy, sell, or hold) and a reason for your decision."""},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps({
+                            "monthly_data": monthly_df.to_json(),
+                            "daily_data": daily_df.to_json(),
+                            "fear_and_greed_index": fgi,
+                            "news_google": news_google,
+                            "news_alpha_vantage": news_alpha_vantage,
+                            "youtube_transcript": youtube_transcript
+                        })
+                    }
+                ]
+            }
+        ],
+        max_tokens=4095,
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "trading_decision",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "decision": {"type": "string", "enum": ["buy", "sell", "hold"]},
+                        "reason": {"type": "string"}
+                    },
+                    "required": ["decision", "reason"],
+                    "additionalProperties": False
+                }
+            }
+        }
+    )
+    # 최신 pydantic 메서드 사용
+    result = TradingDecision.model_validate_json(response.choices[0].message.content)
+    logger.info("Received response from OpenAI")
+
+    # 결과 한국어로 번역
+    # result.reason_kr = translate_to_korean(result.reason)
+
+    logger.info(f"### AI Decision: {result.decision.upper()} ###")
+    logger.info(f"### Reason: {result.reason} ###")
+
+    send_slack_message(result, fgi)
+
+    return result
 
 
 if __name__ == "__main__":
+    logger.info("Starting main program")
     main()
+    logger.info("Program completed")
