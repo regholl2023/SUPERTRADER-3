@@ -18,7 +18,9 @@ from typing import List
 
 class TradingDecision(BaseModel):
     decision: str
+    percentage: int
     reason: str
+
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -29,6 +31,7 @@ def main():
     login = get_login()
     result, reason_kr = openAI_response(login)
     logger.info(f"Trading Decision: {result.decision}")
+    logger.info(f"Percentage: {result.percentage}")
     logger.info(f"Reason: {result.reason}")
     logger.info(f"Reason in Korean: {reason_kr}")
 
@@ -215,6 +218,7 @@ def send_slack_message(result, reason_kr, fgi):
     webhook_url = os.getenv("SLACK_WEBHOOK_URL")
     message = f"""AI Trading Decision for NVIDIA:
     Decision: {result.decision}
+    percentage : {result.percentage}
     Reason: {result.reason}
     Reason_KO: {reason_kr}
 
@@ -257,7 +261,15 @@ def openAI_response(login):
                 - Overall market sentiment
                 - Insights from the YouTube video transcript
 
-                Respond with a decision (buy, sell, or hold) and a reason for your decision."""},
+                RRespond with:
+                1. A decision (buy, sell, or hold)
+                2. If the decision is 'buy', provide a intensity expressed as a percentage ratio (1 to 100).
+                If the decision is 'sell', provide a intensity expressed as a percentage ratio (1 to 100).
+                If the decision is 'hold', set the percentage to 0.
+                3. A reason for your decision
+                
+                Ensure that the percentage is an integer between 1 and 100 for buy/sell decisions, and exactly 0 for hold decisions.
+                Your percentage should reflect the strength of your conviction in the decision based on the analyzed data."""},
             {
                 "role": "user",
                 "content": [
@@ -285,9 +297,10 @@ def openAI_response(login):
                     "type": "object",
                     "properties": {
                         "decision": {"type": "string", "enum": ["buy", "sell", "hold"]},
+                        "percentage": {"type": "integer"},
                         "reason": {"type": "string"}
                     },
-                    "required": ["decision", "reason"],
+                    "required": ["decision", "percentage","reason"],
                     "additionalProperties": False
                 }
             }
@@ -297,10 +310,11 @@ def openAI_response(login):
     result = TradingDecision.model_validate_json(response.choices[0].message.content)
     logger.info("Received response from OpenAI")
 
-    # 결과 한국어로 번역
+    # Translate Reason to Translate into Korean
     reason_kr = translate_to_korean(result.reason)
 
     logger.info(f"### AI Decision: {result.decision.upper()} ###")
+    logger.info(f"### Percentage: {result.percentage} ###")
     logger.info(f"### Reason: {result.reason} ###")
 
     send_slack_message(result,reason_kr, fgi)
