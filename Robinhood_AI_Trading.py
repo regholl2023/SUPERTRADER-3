@@ -1,35 +1,57 @@
 import os
+import sys
+import json
+import logging
+import sqlite3
+import requests
+import pandas as pd
+from typing import Dict, Any
+from datetime import datetime
+from pydantic import BaseModel
+
 import pyotp
 import robin_stocks as r
 from dotenv import load_dotenv
-import pandas as pd
 from openai import OpenAI
-import json
-import requests
 import fear_and_greed
 from deep_translator import GoogleTranslator
-from datetime import datetime
-import logging
 from youtube_transcript_api import YouTubeTranscriptApi
-from pydantic import BaseModel
-import sqlite3
-from typing import Dict, Any
-import math
+from slack_bolt import App
+from slack_bolt.adapter.socket_mode import SocketModeHandler
 
+# 환경 변수 로드 및 로깅 설정
+load_dotenv()
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
+# 설정 클래스
+class Config:
+    ROBINHOOD_USERNAME = os.getenv("username")
+    ROBINHOOD_PASSWORD = os.getenv("password")
+    ROBINHOOD_TOTP_CODE = os.getenv("totpcode")
+    SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
+    ALPHA_VANTAGE_API_KEY = os.getenv("Alpha_Vantage_API_KEY")
+    SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
+    SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
+    SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    INITIAL_BALANCE = 1000
+
+# 거래 결정 모델
 class TradingDecision(BaseModel):
     decision: str
     percentage: int
     reason: str
 
+# AI Stock Trading 클래스
 class AIStockTrading:
     def __init__(self, symbol: str):
         self.symbol = symbol
-        self.logger = self._setup_logger()
+        self.logger = logging.getLogger(f"{symbol}_analyzer")
         self.login = self._get_login()
-        self.openai_client = OpenAI()
+        self.openai_client = OpenAI(api_key=Config.OPENAI_API_KEY)
         self.db_connection = self._setup_database()
-        self.initial_balance = 1000  # 초기 잔고 설정
+        self.initial_balance = Config.INITIAL_BALANCE
         self.balance = self._get_initial_balance()
         self.shares = self._get_initial_shares()
         self.trading_value = self._calculate_trading_value()
@@ -54,93 +76,10 @@ class AIStockTrading:
         conn.commit()
         return conn
 
-    def _calculate_profit_rate(self):
-        total_value = self.balance + self.trading_value
-        try:
-            print("total_value : ", total_value)
-            print("self.initial_balance : ", self.balance)
-            profit_rate = ((total_value - self.balance) / self.initial_balance) * 100
-            profit_rate = round(profit_rate, 2)
-
-            # Check for NaN or None
-            if profit_rate is None or math.isnan(profit_rate):
-                return 0
-
-            return profit_rate
-        except ZeroDivisionError:
-            # Handle the case where initial_balance is zero
-            self.logger.warning("Initial balance is zero. Setting profit rate to 0.")
-            return 0
-        except Exception as e:
-            # Log any unexpected errors and return 0
-            self.logger.error(f"Error calculating profit rate: {str(e)}")
-            return 0
-
-    def _get_initial_balance(self):
-        cursor = self.db_connection.cursor()
-        cursor.execute('SELECT balance FROM trading_records ORDER BY timestamp DESC LIMIT 1')
-        result = cursor.fetchone()
-        return result[0] if result else 1000
-
-    def _get_initial_shares(self):
-        cursor = self.db_connection.cursor()
-        cursor.execute('SELECT shares FROM trading_records WHERE symbol = ? ORDER BY timestamp DESC LIMIT 1',
-                       (self.symbol,))
-        result = cursor.fetchone()
-        return result[0] if result else 0
-
-    def _calculate_trading_value(self):
-        current_price = self.get_current_price()
-        return self.shares * current_price
-
-
-    def _record_trading_decision(self, decision: Dict[str, Any]):
-        timestamp = datetime.now().isoformat()
-        profit_rate = self._calculate_profit_rate()
-        cursor = self.db_connection.cursor()
-        cursor.execute('''
-        INSERT INTO trading_records 
-        (symbol, timestamp, decision, percentage, reason, balance, shares, trading_value, profit_rate)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            self.symbol,
-            timestamp,
-            decision['decision'],
-            decision['percentage'],
-            decision['reason'],
-            self.balance,
-            self.shares,
-            self.trading_value,
-            profit_rate
-        ))
-        self.db_connection.commit()
-
-    def get_trading_history(self):
-        cursor = self.db_connection.cursor()
-        cursor.execute('SELECT * FROM trading_records WHERE symbol = ? ORDER BY timestamp DESC', (self.symbol,))
-        return cursor.fetchall()
-
-    def __del__(self):
-        if hasattr(self, 'db_connection'):
-            self.db_connection.close()
-
-    def _setup_logger(self):
-        logger = logging.getLogger(f"{self.symbol}_analyzer")
-        logger.setLevel(logging.INFO)
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        return logger
-
     def _get_login(self):
-        load_dotenv()
-        username = os.getenv("username")
-        password = os.getenv("password")
-        totpcode = os.getenv("totpcode")
-        totp = pyotp.TOTP(totpcode).now()
+        totp = pyotp.TOTP(Config.ROBINHOOD_TOTP_CODE).now()
         self.logger.info(f"Current OTP: {totp}")
-        login = r.robinhood.login(username, password, mfa_code=totp)
+        login = r.robinhood.login(Config.ROBINHOOD_USERNAME, Config.ROBINHOOD_PASSWORD, mfa_code=totp)
         self.logger.info("Successfully logged in to Robinhood")
         return login
 
@@ -210,32 +149,11 @@ class AIStockTrading:
             "alpha_vantage_news": self._get_news_from_alpha_vantage()
         }
 
-    def get_all_news_title(self, news):
-        # 모든 뉴스 제목을 저장할 리스트 생성
-        all_news_titles = []
-
-        # Google News 제목 추가
-        all_news_titles.extend([news_item['title'] for news_item in news['google_news']])
-
-        # Alpha Vantage News 제목 추가 (현재 비어있지만, 데이터가 있을 경우를 대비)
-        all_news_titles.extend([news_item['title'] for news_item in news['alpha_vantage_news']])
-
-        # 번호가 붙은 뉴스 제목 생성
-        numbered_news = [f"({i + 1}) {title}" for i, title in enumerate(all_news_titles)]
-
-        # 번호가 붙은 뉴스 제목을 개행 문자로 연결
-        all_news_titles = '\n'.join(numbered_news)
-
-        return all_news_titles
-
-
     def _get_news_from_google(self):
         self.logger.info("Fetching news from Google")
-        load_dotenv()
-        SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
         url = "https://www.searchapi.io/api/v1/search"
         params = {
-            "api_key": SERPAPI_API_KEY,
+            "api_key": Config.SERPAPI_API_KEY,
             "engine": "google_news",
             "q": self.symbol,
             "num": 5
@@ -259,9 +177,7 @@ class AIStockTrading:
 
     def _get_news_from_alpha_vantage(self):
         self.logger.info("Fetching news from Alpha Vantage")
-        load_dotenv()
-        Alpha_Vantage_API_KEY = os.getenv("Alpha_Vantage_API_KEY")
-        url = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers={self.symbol}&apikey={Alpha_Vantage_API_KEY}"
+        url = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers={self.symbol}&apikey={Config.ALPHA_VANTAGE_API_KEY}"
         try:
             response = requests.get(url)
             response.raise_for_status()
@@ -310,9 +226,6 @@ class AIStockTrading:
     def ai_trading(self):
         monthly_df, daily_df = self.get_chart_data()
         news = self.get_news()
-        all_news_title = self.get_all_news_title(news)
-
-
         youtube_transcript = self.get_youtube_transcript()
         fgi = self.get_fear_and_greed_index()
 
@@ -323,27 +236,27 @@ class AIStockTrading:
                 {
                     "role": "system",
                     "content": f"""You are an expert in Stock investing. Analyze the provided data including technical indicators, market data, recent news headlines, the Fear and Greed Index, YouTube video transcript, and the chart image. Tell me whether to buy, sell, or hold at the moment. Consider the following in your analysis:
-                    - Technical indicators and market data
-                    - Recent news headlines and their potential impact on Stock price
-                    - The Fear and Greed Index and its implications
-                    - Overall market sentiment
-                    - Insights from the YouTube video transcript
+                            - Technical indicators and market data
+                            - Recent news headlines and their potential impact on Stock price
+                            - The Fear and Greed Index and its implications
+                            - Overall market sentiment
+                            - Insights from the YouTube video transcript
 
-                    Particularly important is to always refer to the trading method of 'Mark Minervini', a legendary stock investor, to assess the current situation and make trading decisions. Mark Minervini's trading method is as follows:
+                            Particularly important is to always refer to the trading method of 'Mark Minervini', a legendary stock investor, to assess the current situation and make trading decisions. Mark Minervini's trading method is as follows:
 
-                    {youtube_transcript}
+                            {youtube_transcript}
 
-                    Based on this trading method, analyze the current market situation and make a judgment by synthesizing it with the provided data.
+                            Based on this trading method, analyze the current market situation and make a judgment by synthesizing it with the provided data.
 
-                    Respond with:
-                    1. A decision (buy, sell, or hold)
-                    2. If the decision is 'buy', provide a intensity expressed as a percentage ratio (1 to 100).
-                    If the decision is 'sell', provide a intensity expressed as a percentage ratio (1 to 100).
-                    If the decision is 'hold', set the percentage to 0.
-                    3. A reason for your decision
+                            Respond with:
+                            1. A decision (buy, sell, or hold)
+                            2. If the decision is 'buy', provide a intensity expressed as a percentage ratio (1 to 100).
+                            If the decision is 'sell', provide a intensity expressed as a percentage ratio (1 to 100).
+                            If the decision is 'hold', set the percentage to 0.
+                            3. A reason for your decision
 
-                    Ensure that the percentage is an integer between 1 and 100 for buy/sell decisions, and exactly 0 for hold decisions.
-                    Your percentage should reflect the strength of your conviction in the decision based on the analyzed data."""},
+                            Ensure that the percentage is an integer between 1 and 100 for buy/sell decisions, and exactly 0 for hold decisions.
+                            Your percentage should reflect the strength of your conviction in the decision based on the analyzed data."""},
                 {
                     "role": "user",
                     "content": [
@@ -387,9 +300,8 @@ class AIStockTrading:
         self.logger.info(f"### AI Decision: {result.decision.upper()} ###")
         self.logger.info(f"### Percentage: {result.percentage} ###")
         self.logger.info(f"### Reason: {result.reason} ###")
-        self.logger.info(f"### News: {all_news_title} ###")
 
-        self._send_slack_message(result, reason_kr, all_news_title, fgi)
+        self._send_slack_message(result, reason_kr, news, fgi)
 
         shares_to_trade = self.calculate_shares_to_trade(result.percentage)
 
@@ -419,7 +331,6 @@ class AIStockTrading:
     def get_current_price(self) -> float:
         quote = r.robinhood.stocks.get_latest_price(self.symbol)[0]
         return float(quote)
-
 
     def calculate_shares_to_trade(self, percentage: int) -> int:
         current_price = self.get_current_price()
@@ -459,16 +370,18 @@ class AIStockTrading:
             self.logger.error(f"Error during translation: {e}")
             return text
 
-    def _send_slack_message(self, result: TradingDecision, reason_kr: str, all_news_title, fgi: Dict[str, Any]):
+    def _send_slack_message(self, result: TradingDecision, reason_kr: str, news: Dict[str, Any],
+                            fgi: Dict[str, Any]):
         self.logger.info("Preparing to send Slack message")
-        load_dotenv()
-        webhook_url = os.getenv("SLACK_WEBHOOK_URL")
+        webhook_url = Config.SLACK_WEBHOOK_URL
         message = f"""AI Trading Decision for {self.symbol}:
         Decision: {result.decision}
-        percentage : {result.percentage}
+        Percentage: {result.percentage}
         Reason: {result.reason}
-        News Title : {all_news_title}
         Reason_KO: {reason_kr}
+
+        Recent News:
+        {self._format_news(news)}
 
         Fear and Greed Index:
         Value: {fgi['value']}
@@ -483,21 +396,123 @@ class AIStockTrading:
         else:
             self.logger.info("Slack message sent successfully")
 
-def main(symbol: str):
-    analyzer = AIStockTrading(symbol)
-    result, reason_kr = analyzer.ai_trading()
-    print(f"Decision: {result.decision}")
-    print(f"Percentage: {result.percentage}")
-    print(f"Reason: {result.reason}")
-    print(f"Korean Reason: {reason_kr}")
+    def _format_news(self, news: Dict[str, Any]) -> str:
+        formatted_news = []
+        for source, items in news.items():
+            for item in items[:3]:  # Limiting to top 3 news items per source
+                formatted_news.append(f"- {item['title']} ({item.get('date', 'N/A')})")
+        return "\n".join(formatted_news)
 
-    # 거래 내역 조회
-    trading_history = analyzer.get_trading_history()
-    print("Trading History:")
-    for record in trading_history:
-        print(record)
+    def _calculate_profit_rate(self):
+        total_value = self.balance + self.trading_value
+        try:
+            profit_rate = ((total_value - self.initial_balance) / self.initial_balance) * 100
+            return round(profit_rate, 2)
+        except ZeroDivisionError:
+            self.logger.warning("Initial balance is zero. Setting profit rate to 0.")
+            return 0
 
+    def _get_initial_balance(self):
+        cursor = self.db_connection.cursor()
+        cursor.execute('SELECT balance FROM trading_records ORDER BY timestamp DESC LIMIT 1')
+        result = cursor.fetchone()
+        return result[0] if result else self.initial_balance
+
+    def _get_initial_shares(self):
+        cursor = self.db_connection.cursor()
+        cursor.execute('SELECT shares FROM trading_records WHERE symbol = ? ORDER BY timestamp DESC LIMIT 1',
+                       (self.symbol,))
+        result = cursor.fetchone()
+        return result[0] if result else 0
+
+    def _calculate_trading_value(self):
+        current_price = self.get_current_price()
+        return self.shares * current_price
+
+    def _record_trading_decision(self, decision: Dict[str, Any]):
+        timestamp = datetime.now().isoformat()
+        profit_rate = self._calculate_profit_rate()
+        cursor = self.db_connection.cursor()
+        cursor.execute('''
+        INSERT INTO trading_records 
+        (symbol, timestamp, decision, percentage, reason, balance, shares, trading_value, profit_rate)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            self.symbol,
+            timestamp,
+            decision['decision'],
+            decision['percentage'],
+            decision['reason'],
+            self.balance,
+            self.shares,
+            self.trading_value,
+            profit_rate
+        ))
+        self.db_connection.commit()
+
+    def get_trading_history(self):
+        cursor = self.db_connection.cursor()
+        cursor.execute('SELECT * FROM trading_records WHERE symbol = ? ORDER BY timestamp DESC', (self.symbol,))
+        return cursor.fetchall()
+
+# Slack Bot 설정
+app = App(token=Config.SLACK_BOT_TOKEN)
+
+def extract_symbol(text):
+    """텍스트에서 주식 심볼을 추출하고 대문자로 변환"""
+    import re
+    symbol_match = re.search(r'\b[A-Za-z]{1,5}\b', text)
+    return symbol_match.group(0).upper() if symbol_match else None
+
+def process_trading(symbol, say):
+    """주식 거래 분석 및 결과 전송"""
+    logger.info(f"{symbol} 심볼에 대한 거래 프로세스 시작")
+    say(f"{symbol}에 대한 거래 분석을 처리 중입니다...")
+
+    try:
+        analyzer = AIStockTrading(symbol)
+        result, reason_kr = analyzer.ai_trading()
+
+        response = f"""Trading Decision for {symbol}:
+        Decision: {result.decision}
+        Percentage: {result.percentage}
+        Reason: {result.reason}
+        Korean Reason: {reason_kr}"""
+
+        logger.info(f"{symbol}에 대한 거래 분석 완료")
+        say(response)
+
+        # 거래 내역 조회 및 전송
+        trading_history = analyzer.get_trading_history()
+        history_message = "Trading History:\n" + "\n".join(str(record) for record in trading_history[:5])
+        logger.info(f"{symbol}에 대한 거래 내역 전송")
+        say(history_message)
+    except Exception as e:
+        logger.error(f"{symbol} 처리 중 오류 발생: {str(e)}", exc_info=True)
+        say(f"{symbol} 처리 중 오류가 발생했습니다. 나중에 다시 시도해 주세요.")
+
+@app.event("app_mention")
+def handle_mention(event, say):
+    """앱 멘션 이벤트 처리"""
+    logger.info(f"앱 멘션 이벤트 수신: {event}")
+    symbol = extract_symbol(event['text'])
+    if symbol:
+        logger.info(f"멘션에서 추출한 심볼: {symbol}")
+        process_trading(symbol, say)
+    else:
+        logger.warning("멘션에서 유효한 심볼을 찾지 못했습니다")
+        say("유효한 주식 심볼을 입력해주세요. 예: @YourBotName AAPL 또는 @YourBotName aapl")
+
+@app.event("message")
+def handle_message(event, logger):
+    """일반 메시지 이벤트 처리 (로깅 목적)"""
+    logger.debug(f"메시지 이벤트 수신: {event}")
+
+def main():
+    """메인 실행 함수"""
+    handler = SocketModeHandler(app, Config.SLACK_APP_TOKEN)
+    logger.info("Slack 봇 시작")
+    handler.start()
 
 if __name__ == "__main__":
-    symbol = str(input("Enter stock symbol: "))
-    main(symbol)
+    main()
