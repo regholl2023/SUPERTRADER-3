@@ -62,6 +62,14 @@ OPENAI_API_KEY=your_openai_api_key
 5. Decision is executed (if applicable), recorded in the database, and sent to user via Slack
 6. Real-time updates are reflected on the Streamlit dashboard
 
+## Flowchart
+![AI Stock Trading System Flowchart](https://mermaid.ink/img/pako:eNp9U-9PwjAQ_VcufdaAQDARiYkbJkQTE6OJH_oFaXv0S9euawcCxv-9K2MwRBq-tL3e3Xv33pWL0KEkIuhC0iCQb0wMOeaCiSSVQVB4cojFQThQ8L7ELChEqngk2sC4m_A88xm14MaIKkL1aJhqN5GfY-FfmPBY3j1H5-Gu3-3eDWC5eJrtF4J6DYsxcXhDKI5hMQZx8QwCYwgizMQiWUNNGFrOTLHKcmEkSHSEaEtJqQPL5aZwT20Yn8KWgVpJ5F5yD7AqGZd59k_lHqfVH-q4Nn1XjI08BzSLHd_wJrDHJZhHtcDNCrcVIvFpyXQe50QxsEfATKA7V5aMrMQq904IXPGRFEWq9fMgSeTrGTQf-q2LVmd43uk99obQOhv0Ly6H_fEQTp-enxbrzITqt4-gkw5gMYgS4dpIlgfBpQYrpGYEF5NJeEn3RnN9dWPDcJc1QUrHREnLIl1TtdQw4nt3jQbLYPc7ZyLnPRV4jMc8Uh1-4XzZMfakVeOKUbZCyJiUDCxKNVNOt5mGmJf0ZygwXjVrRqZx0Y9jRzQRSaP8aJW20OmOMjBRSjBLZIJEBV2Iaf4JXBTvXQ)
+
+[View larger image](https://mermaid.ink/img/pako:eNp9U-9PwjAQ_VcufdaAQDARiYkbJkQTE6OJH_oFaXv0S9euawcCxv-9K2MwRBq-tL3e3Xv33pWL0KEkIuhC0iCQb0wMOeaCiSSVQVB4cojFQThQ8L7ELChEqngk2sC4m_A88xm14MaIKkL1aJhqN5GfY-FfmPBY3j1H5-Gu3-3eDWC5eJrtF4J6DYsxcXhDKI5hMQZx8QwCYwgizMQiWUNNGFrOTLHKcmEkSHSEaEtJqQPL5aZwT20Yn8KWgVpJ5F5yD7AqGZd59k_lHqfVH-q4Nn1XjI08BzSLHd_wJrDHJZhHtcDNCrcVIvFpyXQe50QxsEfATKA7V5aMrMQq904IXPGRFEWq9fMgSeTrGTQf-q2LVmd43uk99obQOhv0Ly6H_fEQTp-enxbrzITqt4-gkw5gMYgS4dpIlgfBpQYrpGYEF5NJeEn3RnN9dWPDcJc1QUrHREnLIl1TtdQw4nt3jQbLYPc7ZyLnPRV4jMc8Uh1-4XzZMfakVeOKUbZCyJiUDCxKNVNOt5mGmJf0ZygwXjVrRqZx0Y9jRzQRSaP8aJW20OmOMjBRSjBLZIJEBV2Iaf4JXBTvXQ)
+
+For those who want to view or edit the flowchart, here's the Mermaid code:
+
+```mermaid
 graph TD
     A[User Input] --> B[Data Collection]
     B --> C[AI Analysis]
