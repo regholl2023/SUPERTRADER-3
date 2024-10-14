@@ -14,6 +14,7 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from pydantic import BaseModel
 import sqlite3
 from typing import Dict, Any
+import math
 
 
 class TradingDecision(BaseModel):
@@ -28,10 +29,10 @@ class AIStockTrading:
         self.login = self._get_login()
         self.openai_client = OpenAI()
         self.db_connection = self._setup_database()
+        self.initial_balance = 1000  # 초기 잔고 설정
         self.balance = self._get_initial_balance()
         self.shares = self._get_initial_shares()
         self.trading_value = self._calculate_trading_value()
-
 
     def _setup_database(self):
         conn = sqlite3.connect('trading_data.db')
@@ -46,11 +47,34 @@ class AIStockTrading:
             reason TEXT,
             balance REAL,
             shares INTEGER,
-            trading_value REAL
+            trading_value REAL,
+            profit_rate REAL
         )
         ''')
         conn.commit()
         return conn
+
+    def _calculate_profit_rate(self):
+        total_value = self.balance + self.trading_value
+        try:
+            print("total_value : ", total_value)
+            print("self.initial_balance : ", self.balance)
+            profit_rate = ((total_value - self.balance) / self.initial_balance) * 100
+            profit_rate = round(profit_rate, 2)
+
+            # Check for NaN or None
+            if profit_rate is None or math.isnan(profit_rate):
+                return 0
+
+            return profit_rate
+        except ZeroDivisionError:
+            # Handle the case where initial_balance is zero
+            self.logger.warning("Initial balance is zero. Setting profit rate to 0.")
+            return 0
+        except Exception as e:
+            # Log any unexpected errors and return 0
+            self.logger.error(f"Error calculating profit rate: {str(e)}")
+            return 0
 
     def _get_initial_balance(self):
         cursor = self.db_connection.cursor()
@@ -72,11 +96,12 @@ class AIStockTrading:
 
     def _record_trading_decision(self, decision: Dict[str, Any]):
         timestamp = datetime.now().isoformat()
+        profit_rate = self._calculate_profit_rate()
         cursor = self.db_connection.cursor()
         cursor.execute('''
         INSERT INTO trading_records 
-        (symbol, timestamp, decision, percentage, reason, balance, shares, trading_value)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (symbol, timestamp, decision, percentage, reason, balance, shares, trading_value, profit_rate)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             self.symbol,
             timestamp,
@@ -85,7 +110,8 @@ class AIStockTrading:
             decision['reason'],
             self.balance,
             self.shares,
-            self.trading_value
+            self.trading_value,
+            profit_rate
         ))
         self.db_connection.commit()
 
@@ -375,9 +401,11 @@ class AIStockTrading:
         else:  # hold
             self.logger.info("Holding current position")
 
+        profit_rate = self._calculate_profit_rate()
         self.logger.info(f"Current balance: ${self.balance:.2f}")
         self.logger.info(f"Current shares: {self.shares}")
         self.logger.info(f"Current position value: ${self.trading_value:.2f}")
+        self.logger.info(f"Current profit rate: {profit_rate:.2f}%")
 
         # Record the trading decision and current state
         self._record_trading_decision({
@@ -468,6 +496,7 @@ def main(symbol: str):
     print("Trading History:")
     for record in trading_history:
         print(record)
+
 
 if __name__ == "__main__":
     symbol = str(input("Enter stock symbol: "))
