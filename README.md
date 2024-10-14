@@ -63,65 +63,30 @@ OPENAI_API_KEY=your_openai_api_key
 6. Real-time updates are reflected on the Streamlit dashboard
 
 ## Flowchart
-![AI Stock Trading System Flowchart](https://mermaid.ink/img/pako:eNp9U-9PwjAQ_VcufdaAQDARiYkbJkQTE6OJH_oFaXv0S9euawcCxv-9K2MwRBq-tL3e3Xv33pWL0KEkIuhC0iCQb0wMOeaCiSSVQVB4cojFQThQ8L7ELChEqngk2sC4m_A88xm14MaIKkL1aJhqN5GfY-FfmPBY3j1H5-Gu3-3eDWC5eJrtF4J6DYsxcXhDKI5hMQZx8QwCYwgizMQiWUNNGFrOTLHKcmEkSHSEaEtJqQPL5aZwT20Yn8KWgVpJ5F5yD7AqGZd59k_lHqfVH-q4Nn1XjI08BzSLHd_wJrDHJZhHtcDNCrcVIvFpyXQe50QxsEfATKA7V5aMrMQq904IXPGRFEWq9fMgSeTrGTQf-q2LVmd43uk99obQOhv0Ly6H_fEQTp-enxbrzITqt4-gkw5gMYgS4dpIlgfBpQYrpGYEF5NJeEn3RnN9dWPDcJc1QUrHREnLIl1TtdQw4nt3jQbLYPc7ZyLnPRV4jMc8Uh1-4XzZMfakVeOKUbZCyJiUDCxKNVNOt5mGmJf0ZygwXjVrRqZx0Y9jRzQRSaP8aJW20OmOMjBRSjBLZIJEBV2Iaf4JXBTvXQ)
 
-[View larger image](https://mermaid.ink/img/pako:eNp9U-9PwjAQ_VcufdaAQDARiYkbJkQTE6OJH_oFaXv0S9euawcCxv-9K2MwRBq-tL3e3Xv33pWL0KEkIuhC0iCQb0wMOeaCiSSVQVB4cojFQThQ8L7ELChEqngk2sC4m_A88xm14MaIKkL1aJhqN5GfY-FfmPBY3j1H5-Gu3-3eDWC5eJrtF4J6DYsxcXhDKI5hMQZx8QwCYwgizMQiWUNNGFrOTLHKcmEkSHSEaEtJqQPL5aZwT20Yn8KWgVpJ5F5yD7AqGZd59k_lHqfVH-q4Nn1XjI08BzSLHd_wJrDHJZhHtcDNCrcVIvFpyXQe50QxsEfATKA7V5aMrMQq904IXPGRFEWq9fMgSeTrGTQf-q2LVmd43uk99obQOhv0Ly6H_fEQTp-enxbrzITqt4-gkw5gMYgS4dpIlgfBpQYrpGYEF5NJeEn3RnN9dWPDcJc1QUrHREnLIl1TtdQw4nt3jQbLYPc7ZyLnPRV4jMc8Uh1-4XzZMfakVeOKUbZCyJiUDCxKNVNOt5mGmJf0ZygwXjVrRqZx0Y9jRzQRSaP8aJW20OmOMjBRSjBLZIJEBV2Iaf4JXBTvXQ)
++----------------+     +-------------------+     +-------------+
+|   User Input   |     |   Data Collection |     | AI Analysis |
+| (Slack Bot)    | --> | - Stock Data      | --> | - Technical |
+| - Stock Symbol |     | - News Articles   |     | - Sentiment |
+|                |     | - Market Indicators|     | - GPT Model |
++----------------+     +-------------------+     +-------------+
+|                                              |
+|                                              |
+v                                              v
++----------------+     +-------------------+     +-------------+
+| User Review    |     |     Reporting     |     |   Trade     |
+| - View Results | <-- | - Database Record | <-- | Execution   |
+| - Monitor      |     | - Slack Notify    |     | - Buy/Sell  |
+|   Performance  |     | - Dashboard Update|     | - Order     |
++----------------+     +-------------------+     +-------------+
 
-For those who want to view or edit the flowchart, here's the Mermaid code:
-
-```mermaid
-graph TD
-    A[User Input] --> B[Data Collection]
-    B --> C[AI Analysis]
-    C --> D[Trade Execution]
-    D --> E[Reporting]
-    E --> F[User Review]
-
-    subgraph A[1. User Input]
-        A1[Slack Bot Interaction]
-        A2[Enter Stock Symbol]
-    end
-
-    subgraph B[2. Data Collection]
-        B1[Fetch Stock Data]
-        B2[Gather News Articles]
-        B3[Collect Market Indicators]
-    end
-
-    subgraph C[3. AI Analysis]
-        C1[Perform Technical Analysis]
-        C2[Conduct Sentiment Analysis]
-        C3[Generate GPT Model Prediction]
-    end
-
-    subgraph D[4. Trade Execution]
-        D1[Make Buy/Sell Decision]
-        D2[Place Order]
-    end
-
-    subgraph E[5. Reporting]
-        E1[Record in Database]
-        E2[Send Slack Notification]
-        E3[Update Dashboard]
-    end
-
-    subgraph F[6. User Review]
-        F1[View Results]
-        F2[Monitor Performance]
-    end
-
-    A1 --> A2
-    B1 --> B2 --> B3
-    C1 --> C2 --> C3
-    D1 --> D2
-    E1 --> E2 --> E3
-    F1 --> F2
-
-    classDef default fill:#f9f,stroke:#333,stroke-width:2px;
-    classDef subProcess fill:#bbf,stroke:#333,stroke-width:1px;
-    class A,B,C,D,E,F default;
-    class A1,A2,B1,B2,B3,C1,C2,C3,D1,D2,E1,E2,E3,F1,F2 subProcess;
-
+이 순서도는 AI 주식 거래 시스템의 주요 단계를 보여줍니다:
+1. **User Input**: 사용자가 Slack 봇을 통해 주식 심볼을 입력합니다.
+2. **Data Collection**: 시스템이 주식 데이터, 뉴스 기사, 시장 지표 등을 수집합니다.
+3. **AI Analysis**: 수집된 데이터를 바탕으로 기술적 분석, 감성 분석, GPT 모델 예측을 수행합니다.
+4. **Trade Execution**: 분석 결과를 바탕으로 매수/매도 결정을 내리고 주문을 실행합니다.
+5. **Reporting**: 거래 결과를 데이터베이스에 기록하고, Slack으로 알림을 보내며, 대시보드를 업데이트합니다.
+6. **User Review**: 사용자가 결과를 확인하고 성과를 모니터링합니다.
 
 ## Contributing
 Contributions to improve the system are welcome. Please follow these steps:
