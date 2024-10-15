@@ -1,5 +1,5 @@
 import os
-import sys
+import re
 import json
 import logging
 import sqlite3
@@ -44,8 +44,8 @@ class TradingDecision(BaseModel):
     reason: str
     expected_next_day_price: float
 
-# AI Stock Trading class
-class AIStockTrading:
+# AI Stock Advisor System class
+class AIStockAdvisorSystem:
     def __init__(self, stock: str):
         self.stock = stock
         self.logger = logging.getLogger(f"{stock}_analyzer")
@@ -54,10 +54,10 @@ class AIStockTrading:
         self.db_connection = self._setup_database()
 
     def _setup_database(self):
-        conn = sqlite3.connect('ai_trading_records.db')
+        conn = sqlite3.connect('ai_stock_analysis_records.db')
         cursor = conn.cursor()
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS ai_trading_records (
+        CREATE TABLE IF NOT EXISTS ai_stock_analysis_records (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             Stock TEXT,
             Time DATETIME,
@@ -244,8 +244,9 @@ class AIStockTrading:
             self.logger.error(f"Error fetching YouTube transcript: {str(e)}")
             return f"An error occurred: {str(e)}"
 
-    def ai_trading(self):
-        # Perform AI-based trading analysis
+
+    def ai_stock_analysis(self):
+        # Perform AI-based Stock analysis
         monthly_df, daily_df = self.get_chart_data()
         news = self.get_news()
         youtube_transcript = self.get_youtube_transcript()
@@ -335,8 +336,6 @@ class AIStockTrading:
         self.logger.info(f"### Current Price: {current_price:.2f} ###")
         self.logger.info(f"### Expected Next Day Price: {result.expected_next_day_price:.2f} ###")
 
-        self._send_slack_message(result, reason_kr, news, fgi, current_price)
-
         # Record the trading decision and current state
         self._record_trading_decision({
             'Decision': result.decision,
@@ -346,7 +345,7 @@ class AIStockTrading:
             'ExpectedNextDayPrice': round(result.expected_next_day_price, 2)
         })
 
-        return result, reason_kr
+        return result, reason_kr, news, fgi, current_price
 
     def _translate_to_korean(self, text):
         # Translate text to Korean
@@ -360,41 +359,8 @@ class AIStockTrading:
             self.logger.error(f"Error during translation: {e}")
             return text
 
-    def _send_slack_message(self, result: TradingDecision, reason_kr: str, news: Dict[str, Any],
-                            fgi: Dict[str, Any], current_price):
-        self.logger.info("Preparing to send Slack message")
-        webhook_url = Config.SLACK_WEBHOOK_URL
-        message = f"""AI Trading Decision for {self.stock}:
-        Decision: {result.decision}
-        Percentage: {result.percentage}%
-        Current Price: ${current_price:.2f}
-        Predicted NextDay Price: ${result.expected_next_day_price:.2f}
-        Reason: {result.reason}
-        Reason_KO: {reason_kr}
-        Recent News:
-        {self._format_news(news)}
-
-        Fear and Greed Index:
-        Value: {fgi['value']:.2f}
-        Description: {fgi['description']}
-        Last Update: {fgi['last_update']}"""
-
-        payload = {"text": message}
-        response = requests.post(webhook_url, json=payload)
-
-        if response.status_code != 200:
-            self.logger.error(f"Failed to send Slack message. Status code: {response.status_code}")
-        else:
-            self.logger.info("Slack message sent successfully")
-
-    def _format_news(self, news: Dict[str, Any]) -> str:
-        formatted_news = []
-        for source, items in news.items():
-            for item in items[:3]:  # Limiting to top 3 news items per source
-                formatted_news.append(f"- {item['title']} ({item.get('date', 'N/A')})")
-        return "\n".join(formatted_news)
-
     def _record_trading_decision(self, decision: Dict[str, Any]):
+        # Record trading decision in the database
         time_ = datetime.now().isoformat()
         current_price = decision['CurrentPrice']
         expected_next_day_price = decision['ExpectedNextDayPrice']
@@ -402,7 +368,7 @@ class AIStockTrading:
 
         cursor = self.db_connection.cursor()
         cursor.execute('''
-        INSERT INTO ai_trading_records 
+        INSERT INTO ai_stock_analysis_records 
         (Stock, Time, Decision, Percentage, Reason, CurrentPrice, ExpectedNextDayPrice, ExpectedPriceDifference)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
@@ -417,76 +383,75 @@ class AIStockTrading:
         ))
         self.db_connection.commit()
 
-    def get_trading_history(self):
-        cursor = self.db_connection.cursor()
-        cursor.execute('''
-        SELECT Stock, Time, Decision, Percentage, Reason, 
-               printf("%.2f", CurrentPrice) as CurrentPrice, 
-               printf("%.2f", ExpectedNextDayPrice) as ExpectedNextDayPrice, 
-               printf("%.2f", ExpectedPriceDifference) as ExpectedPriceDifference 
-        FROM ai_trading_records 
-        WHERE Stock = ? 
-        ORDER BY Time DESC
-        ''', (self.stock,))
-        return cursor.fetchall()
-
-# Slack Bot 설정
+# Slack Bot Configuration
 app = App(token=Config.SLACK_BOT_TOKEN)
 
 def extract_stock(text):
-    """텍스트에서 주식 이름을 추출하고 대문자로 변환"""
-    import re
+    # Extract stock name from text and convert to uppercase
     stock_match = re.search(r'\b[A-Za-z]{1,5}\b', text)
     return stock_match.group(0).upper() if stock_match else None
 
 def process_trading(stock, say):
-    """주식 거래 분석 및 결과 전송"""
-    logger.info(f"{stock} 주식에 대한 거래 프로세스 시작")
-    say(f"{stock}에 대한 거래 분석을 처리 중입니다...")
+    # Process stock trading analysis and send results
+    logger.info(f"Starting the stock trading analysis for {stock}")
+    say(f"Processing analysis for {stock}...")
+
+    def _format_news(news: Dict[str, Any]) -> str:
+        # Format news items for Slack message
+        formatted_news = []
+        for source, items in news.items():
+            for item in items[:3]:  # Limiting to top 3 news items per source
+                formatted_news.append(f"- {item['title']} ({item.get('date', 'N/A')})")
+        return "\n".join(formatted_news)
 
     try:
-        analyzer = AIStockTrading(stock)
-        result, reason_kr = analyzer.ai_trading()
+        analyzer = AIStockAdvisorSystem(stock)
+        result, reason_kr, news, fgi, current_price = analyzer.ai_stock_analysis()
 
-        response = f"""Trading Decision for {stock}:
+        response = f"""AI Trading Decision for {stock}:
         Decision: {result.decision}
-        Percentage: {result.percentage}
+        Percentage: {result.percentage}%
+        Current Price: ${current_price:.2f}
+        Predicted NextDay Price: ${result.expected_next_day_price:.2f}
         Reason: {result.reason}
-        Korean Reason: {reason_kr}"""
+        Reason_KO: {reason_kr}
+        Recent News:
+        {_format_news(news)}
 
-        logger.info(f"{stock}에 대한 거래 분석 완료")
+        Fear and Greed Index:
+        Value: {fgi['value']:.2f}
+        Description: {fgi['description']}
+        Last Update: {fgi['last_update']}"""
+
+        logger.info(f"Completed the stock trading analysis for {stock}")
         say(response)
 
-        # 거래 내역 조회 및 전송
-        trading_history = analyzer.get_trading_history()
-        history_message = "Trading History:\n" + "\n".join(str(record) for record in trading_history[:5])
-        logger.info(f"{stock}에 대한 거래 내역 전송")
-        say(history_message)
     except Exception as e:
-        logger.error(f"{stock} 처리 중 오류 발생: {str(e)}", exc_info=True)
-        say(f"{stock} 처리 중 오류가 발생했습니다. 나중에 다시 시도해 주세요.")
+        logger.error(f"Error occurred while processing {stock}: {str(e)}", exc_info=True)
+        say(f"An error occurred while processing {stock}. Please try again later.")
+
 
 @app.event("app_mention")
 def handle_mention(event, say):
-    """앱 멘션 이벤트 처리"""
-    logger.info(f"앱 멘션 이벤트 수신: {event}")
+    # Handle app mention events
+    logger.info(f"Received app mention event: {event}")
     stock = extract_stock(event['text'])
     if stock:
-        logger.info(f"멘션에서 추출한 주식: {stock}")
+        logger.info(f"Extracted stock from mention: {stock}")
         process_trading(stock, say)
     else:
-        logger.warning("멘션에서 유효한 주식 이름을 찾지 못했습니다")
-        say("유효한 주식 심볼을 입력해주세요. 예: @YourBotName AAPL 또는 @YourBotName aapl")
+        logger.warning("Could not find valid stock name in mention")
+        say("Please enter a valid stock symbol. For example: @YourBotName AAPL or @YourBotName aapl")
 
 @app.event("message")
 def handle_message(event, logger):
-    """일반 메시지 이벤트 처리 (로깅 목적)"""
-    logger.debug(f"메시지 이벤트 수신: {event}")
+    # Handle general message events (for logging purposes)
+    logger.debug(f"Received message event: {event}")
 
 def main():
-    """메인 실행 함수"""
+    # Main execution function
     handler = SocketModeHandler(app, Config.SLACK_APP_TOKEN)
-    logger.info("Trading AI 봇 시작")
+    logger.info("Starting AI Stock Advisor")
     handler.start()
 
 if __name__ == "__main__":

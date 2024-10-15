@@ -1,8 +1,8 @@
-# Robinhood_AI_Trading
-# AI-Powered Stock Trading System
+# AI Stock Advisor
+# AI-Powered Stock Advisor System
 
 ## Overview
-This project is an AI-powered stock trading system that combines real-time market data, news sentiment, technical indicators, and machine learning to make informed trading decisions. It integrates with Robinhood for trading, uses OpenAI's GPT model for analysis, and communicates results via Slack.
+This project is an AI-powered stock advisor system that combines real-time market data, news sentiment, technical indicators, and machine learning to make informed trading decisions. It integrates with Robinhood for trading, uses OpenAI's GPT model for analysis, and communicates results via Slack.
 
 ## Features
 - Real-time stock data retrieval and analysis
