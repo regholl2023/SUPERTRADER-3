@@ -9,6 +9,8 @@ from typing import Dict, Any
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 import yfinance as yf
+import matplotlib.pyplot as plt
+from typing import Tuple, List
 
 import pyotp
 import robin_stocks as r
@@ -84,6 +86,7 @@ class AIStockAdvisorSystem:
                 avg_expected_next_day_price REAL,
                 actual_next_day_price REAL,
                 price_difference REAL,
+                error_percentage REAL DEFAULT 0,
                 count INTEGER DEFAULT 1
             )
             ''')
@@ -130,6 +133,7 @@ class AIStockAdvisorSystem:
         self._fetch_actual_stock_prices()
 
         self.logger.info("Performance data migration and update completed")
+
 
     def _get_login(self):
         # Generate TOTP and log in to Robinhood
@@ -541,21 +545,23 @@ class AIStockAdvisorSystem:
 
             try:
                 ticker = yf.Ticker(stock)
-                # next_date의 종가를 가져오기 위해 다음 날짜까지의 데이터를 요청
                 hist = ticker.history(start=next_date, end=next_date + timedelta(days=1))
 
                 if not hist.empty:
-                    actual_price = round(hist['Close'].iloc[0], 2)  # 소수점 둘째자리까지 반올림
-                    price_difference = round(actual_price - avg_expected_next_day_price, 2)  # 소수점 둘째자리까지 반올림
+                    actual_price = round(hist['Close'].iloc[0], 2)
+                    price_difference = round(actual_price - avg_expected_next_day_price, 2)
+                    error_percentage = round((price_difference / actual_price) * 100, 2) if actual_price != 0 else 0
 
                     cursor.execute("""
                     UPDATE stock_performance
                     SET actual_next_day_price = ?,
-                        price_difference = ?
+                        price_difference = ?,
+                        error_percentage = ?
                     WHERE stock = ? AND date = ?
-                    """, (actual_price, price_difference, stock, date))
+                    """, (actual_price, price_difference, error_percentage, stock, date))
                     self.logger.info(
-                        f"Updated actual next day price for {stock} on {next_date}: {actual_price:.2f}, difference: {price_difference:.2f}")
+                        f"Updated actual next day price for {stock} on {next_date}: {actual_price:.2f}, "
+                        f"difference: {price_difference:.2f}, error percentage: {error_percentage:.2f}%")
                 else:
                     self.logger.warning(f"No data available for {stock} on {next_date}")
             except Exception as e:
@@ -564,8 +570,20 @@ class AIStockAdvisorSystem:
         self.performance_db_connection.commit()
         self.logger.info("Actual next day stock prices fetched and updated")
 
+    def _update_error_percentage(self):
+        cursor = self.performance_db_connection.cursor()
 
+        cursor.execute('''
+        UPDATE stock_performance
+        SET error_percentage = CASE
+            WHEN actual_next_day_price IS NOT NULL AND actual_next_day_price != 0
+            THEN (price_difference / actual_next_day_price) * 100
+            ELSE 0
+        END
+        ''')
 
+        self.performance_db_connection.commit()
+        self.logger.info("Updated error_percentage for all records")
 
 # Slack Bot Configuration
 app = App(token=Config.SLACK_BOT_TOKEN)
