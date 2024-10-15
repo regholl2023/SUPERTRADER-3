@@ -42,6 +42,7 @@ class TradingDecision(BaseModel):
     decision: str
     percentage: int
     reason: str
+    expected_next_day_price: float
 
 # AI Stock Trading class
 class AIStockTrading:
@@ -53,7 +54,6 @@ class AIStockTrading:
         self.db_connection = self._setup_database()
 
     def _setup_database(self):
-        # Set up SQLite database connection
         conn = sqlite3.connect('ai_trading_records.db')
         cursor = conn.cursor()
         cursor.execute('''
@@ -63,7 +63,10 @@ class AIStockTrading:
             Time DATETIME,
             Decision TEXT,
             Percentage INTEGER,
-            Reason TEXT
+            Reason TEXT,
+            CurrentPrice REAL,
+            ExpectedNextDayPrice REAL,
+            ExpectedPriceDifference REAL
         )
         ''')
         conn.commit()
@@ -76,6 +79,18 @@ class AIStockTrading:
         login = r.robinhood.login(Config.ROBINHOOD_USERNAME, Config.ROBINHOOD_PASSWORD, mfa_code=totp)
         self.logger.info("Successfully logged in to Robinhood")
         return login
+
+    def get_current_price(self):
+        # Fetch current price from Robinhood
+        self.logger.info(f"Fetching current price for {self.stock}")
+        try:
+            quote = r.robinhood.stocks.get_latest_price(self.stock)
+            current_price = round(float(quote[0]), 2)
+            self.logger.info(f"Current price for {self.stock}: ${current_price:.2f}")
+            return current_price
+        except Exception as e:
+            self.logger.error(f"Error fetching current price: {str(e)}")
+            return None
 
     def get_chart_data(self):
         # Fetch chart data for the stock
@@ -235,6 +250,11 @@ class AIStockTrading:
         news = self.get_news()
         youtube_transcript = self.get_youtube_transcript()
         fgi = self.get_fear_and_greed_index()
+        current_price = self.get_current_price()
+
+        if current_price is None:
+            self.logger.error("Failed to get current price. Aborting analysis.")
+            return None, None
 
         self.logger.info("Sending request to OpenAI")
         response = self.openai_client.chat.completions.create(
@@ -243,27 +263,31 @@ class AIStockTrading:
                 {
                     "role": "system",
                     "content": f"""You are an expert in Stock investing. Analyze the provided data including technical indicators, market data, recent news headlines, the Fear and Greed Index, YouTube video transcript, and the chart image. Tell me whether to buy, sell, or hold at the moment. Consider the following in your analysis:
-                            - Technical indicators and market data
-                            - Recent news headlines and their potential impact on Stock price
-                            - The Fear and Greed Index and its implications
-                            - Overall market sentiment
-                            - Insights from the YouTube video transcript
+                        - Technical indicators and market data
+                        - Recent news headlines and their potential impact on Stock price
+                        - The Fear and Greed Index and its implications
+                        - Overall market sentiment
+                        - Insights from the YouTube video transcript
+                        - Current stock price: ${current_price}
 
-                            Particularly important is to always refer to the trading method of 'Mark Minervini', a legendary stock investor, to assess the current situation and make trading decisions. Mark Minervini's trading method is as follows:
+                        Particularly important is to always refer to the trading method of 'Mark Minervini', a legendary stock investor, to assess the current situation and make trading decisions. Mark Minervini's trading method is as follows:
 
-                            {youtube_transcript}
+                        {youtube_transcript}
 
-                            Based on this trading method, analyze the current market situation and make a judgment by synthesizing it with the provided data.
+                        Based on this trading method, analyze the current market situation and make a judgment by synthesizing it with the provided data.
 
-                            Respond with:
-                            1. A decision (BUY, SELL, or HOLD)
-                            2. If the decision is 'BUY', provide a intensity expressed as a percentage ratio (1 to 100).
-                            If the decision is 'SELL', provide a intensity expressed as a percentage ratio (1 to 100).
-                            If the decision is 'HOLD', set the percentage to 0.
-                            3. A reason for your decision
+                        Additionally, predict the next day's closing price for the stock based on your analysis.
 
-                            Ensure that the percentage is an integer between 1 and 100 for buy/sell decisions, and exactly 0 for hold decisions.
-                            Your percentage should reflect the strength of your conviction in the decision based on the analyzed data."""},
+                        Respond with:
+                        1. A decision (BUY, SELL, or HOLD)
+                        2. If the decision is 'BUY' or 'SELL', provide an intensity expressed as a percentage ratio (1 to 100).
+                           If the decision is 'HOLD', set the percentage to 0.
+                        3. A reason for your decision
+                        4. A prediction for the next day's closing price
+
+                        Ensure that the percentage is an integer between 1 and 100 for buy/sell decisions, and exactly 0 for hold decisions.
+                        Your percentage should reflect the strength of your conviction in the decision based on the analyzed data.
+                        The next day's closing price prediction should be a float value."""},
                 {
                     "role": "user",
                     "content": [
@@ -291,9 +315,10 @@ class AIStockTrading:
                         "properties": {
                             "decision": {"type": "string", "enum": ["BUY", "SELL", "HOLD"]},
                             "percentage": {"type": "integer"},
-                            "reason": {"type": "string"}
+                            "reason": {"type": "string"},
+                            "expected_next_day_price": {"type": "number"},
                         },
-                        "required": ["decision", "percentage", "reason"],
+                        "required": ["decision", "percentage", "reason","expected_next_day_price"],
                         "additionalProperties": False
                     }
                 }
@@ -307,14 +332,18 @@ class AIStockTrading:
         self.logger.info(f"### AI Decision: {result.decision.upper()} ###")
         self.logger.info(f"### Percentage: {result.percentage} ###")
         self.logger.info(f"### Reason: {result.reason} ###")
+        self.logger.info(f"### Current Price: {current_price:.2f} ###")
+        self.logger.info(f"### Expected Next Day Price: {result.expected_next_day_price:.2f} ###")
 
-        self._send_slack_message(result, reason_kr, news, fgi)
+        self._send_slack_message(result, reason_kr, news, fgi, current_price)
 
         # Record the trading decision and current state
         self._record_trading_decision({
             'Decision': result.decision,
             'Percentage': result.percentage,
-            'Reason': result.reason
+            'Reason': result.reason,
+            'CurrentPrice': round(current_price,2),
+            'ExpectedNextDayPrice': round(result.expected_next_day_price, 2)
         })
 
         return result, reason_kr
@@ -332,21 +361,21 @@ class AIStockTrading:
             return text
 
     def _send_slack_message(self, result: TradingDecision, reason_kr: str, news: Dict[str, Any],
-                            fgi: Dict[str, Any]):
-        # Send trading decision to Slack
+                            fgi: Dict[str, Any], current_price):
         self.logger.info("Preparing to send Slack message")
         webhook_url = Config.SLACK_WEBHOOK_URL
         message = f"""AI Trading Decision for {self.stock}:
         Decision: {result.decision}
-        Percentage: {result.percentage}
+        Percentage: {result.percentage}%
+        Current Price: ${current_price:.2f}
+        Predicted NextDay Price: ${result.expected_next_day_price:.2f}
         Reason: {result.reason}
         Reason_KO: {reason_kr}
-
         Recent News:
         {self._format_news(news)}
 
         Fear and Greed Index:
-        Value: {fgi['value']}
+        Value: {fgi['value']:.2f}
         Description: {fgi['description']}
         Last Update: {fgi['last_update']}"""
 
@@ -365,26 +394,40 @@ class AIStockTrading:
                 formatted_news.append(f"- {item['title']} ({item.get('date', 'N/A')})")
         return "\n".join(formatted_news)
 
-
     def _record_trading_decision(self, decision: Dict[str, Any]):
         time_ = datetime.now().isoformat()
+        current_price = decision['CurrentPrice']
+        expected_next_day_price = decision['ExpectedNextDayPrice']
+        expected_price_difference = round(expected_next_day_price - current_price,2)
+
         cursor = self.db_connection.cursor()
         cursor.execute('''
         INSERT INTO ai_trading_records 
-        (Stock, Time, Decision, Percentage, Reason)
-        VALUES (?, ?, ?, ?, ?)
+        (Stock, Time, Decision, Percentage, Reason, CurrentPrice, ExpectedNextDayPrice, ExpectedPriceDifference)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             self.stock,
             time_,
             decision['Decision'],
             decision['Percentage'],
             decision['Reason'],
+            current_price,
+            expected_next_day_price,
+            expected_price_difference
         ))
         self.db_connection.commit()
 
     def get_trading_history(self):
         cursor = self.db_connection.cursor()
-        cursor.execute('SELECT * FROM ai_trading_records WHERE Stock = ? ORDER BY Time DESC', (self.stock,))
+        cursor.execute('''
+        SELECT Stock, Time, Decision, Percentage, Reason, 
+               printf("%.2f", CurrentPrice) as CurrentPrice, 
+               printf("%.2f", ExpectedNextDayPrice) as ExpectedNextDayPrice, 
+               printf("%.2f", ExpectedPriceDifference) as ExpectedPriceDifference 
+        FROM ai_trading_records 
+        WHERE Stock = ? 
+        ORDER BY Time DESC
+        ''', (self.stock,))
         return cursor.fetchall()
 
 # Slack Bot 설정
