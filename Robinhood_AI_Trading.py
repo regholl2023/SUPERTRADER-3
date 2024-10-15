@@ -6,8 +6,9 @@ import sqlite3
 import requests
 import pandas as pd
 from typing import Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 from pydantic import BaseModel
+import yfinance as yf
 
 import pyotp
 import robin_stocks as r
@@ -35,7 +36,6 @@ class Config:
     SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
     SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    INITIAL_BALANCE = 1000
 
 # Trading decision model
 class TradingDecision(BaseModel):
@@ -51,26 +51,85 @@ class AIStockAdvisorSystem:
         self.logger = logging.getLogger(f"{stock}_analyzer")
         self.login = self._get_login()
         self.openai_client = OpenAI(api_key=Config.OPENAI_API_KEY)
-        self.db_connection = self._setup_database()
+        self.db_connection = self._setup_database('ai_stock_analysis_records.db')
+        self.performance_db_connection = self._setup_database('ai_stock_performance.db')
+        self._migrate_and_update_performance_data()
 
-    def _setup_database(self):
-        conn = sqlite3.connect('ai_stock_analysis_records.db')
+    def _setup_database(self, db_name: str):
+        conn = sqlite3.connect(db_name)
         cursor = conn.cursor()
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS ai_stock_analysis_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            Stock TEXT,
-            Time DATETIME,
-            Decision TEXT,
-            Percentage INTEGER,
-            Reason TEXT,
-            CurrentPrice REAL,
-            ExpectedNextDayPrice REAL,
-            ExpectedPriceDifference REAL
-        )
-        ''')
+
+        if db_name == 'ai_stock_analysis_records.db':
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ai_stock_analysis_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Stock TEXT,
+                Time DATETIME,
+                Decision TEXT,
+                Percentage INTEGER,
+                Reason TEXT,
+                CurrentPrice REAL,
+                ExpectedNextDayPrice REAL,
+                ExpectedPriceDifference REAL
+            )
+            ''')
+        elif db_name == 'ai_stock_performance.db':
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS stock_performance (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock TEXT,
+                date DATE,
+                avg_current_price REAL,
+                next_date DATE,
+                avg_expected_next_day_price REAL,
+                actual_next_day_price REAL,
+                price_difference REAL,
+                count INTEGER DEFAULT 1
+            )
+            ''')
+
         conn.commit()
+        self.logger.info(f"Database {db_name} setup completed")
         return conn
+
+    def _migrate_and_update_performance_data(self):
+        cursor_analysis = self.db_connection.cursor()
+        cursor_performance = self.performance_db_connection.cursor()
+
+        # 1. ai_stock_analysis_records에서 모든 데이터 가져오기
+        cursor_analysis.execute("""
+        SELECT Stock, DATE(Time) as Date, CurrentPrice, ExpectedNextDayPrice
+        FROM ai_stock_analysis_records
+        """)
+        records = cursor_analysis.fetchall()
+
+        # 2. 데이터를 DataFrame으로 변환하고 Stock과 Date로 그룹화
+        df = pd.DataFrame(records, columns=['Stock', 'Date', 'CurrentPrice', 'ExpectedNextDayPrice'])
+        grouped = df.groupby(['Stock', 'Date'])
+
+        # 3. 각 그룹에 대해 평균 계산
+        aggregated = grouped.agg({
+            'CurrentPrice': 'mean',
+            'ExpectedNextDayPrice': 'mean',
+            'Stock': 'count'  # 이것은 각 그룹의 레코드 수를 계산합니다
+        }).rename(columns={'Stock': 'Count'})
+
+        # 4. 계산된 데이터를 ai_stock_performance.db에 입력
+        for (stock, date), row in aggregated.iterrows():
+            next_date = (datetime.strptime(date, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
+
+            cursor_performance.execute("""
+            INSERT OR REPLACE INTO stock_performance
+            (stock, date, next_date, avg_current_price, avg_expected_next_day_price, count)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """, (stock, date, next_date, row['CurrentPrice'], row['ExpectedNextDayPrice'], row['Count']))
+
+        self.performance_db_connection.commit()
+
+        # 5. & 6. next_date 기반으로 실제 주식 종가 가져와 저장
+        self._fetch_actual_stock_prices()
+
+        self.logger.info("Performance data migration and update completed")
 
     def _get_login(self):
         # Generate TOTP and log in to Robinhood
@@ -360,11 +419,10 @@ class AIStockAdvisorSystem:
             return text
 
     def _record_trading_decision(self, decision: Dict[str, Any]):
-        # Record trading decision in the database
-        time_ = datetime.now().isoformat()
+        time_ = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         current_price = decision['CurrentPrice']
         expected_next_day_price = decision['ExpectedNextDayPrice']
-        expected_price_difference = round(expected_next_day_price - current_price,2)
+        expected_price_difference = round(expected_next_day_price - current_price, 2)
 
         cursor = self.db_connection.cursor()
         cursor.execute('''
@@ -382,6 +440,132 @@ class AIStockAdvisorSystem:
             expected_price_difference
         ))
         self.db_connection.commit()
+
+        # Update performance data
+        self._update_performance_data(decision)
+        self._fetch_actual_stock_prices()
+
+    def _update_performance_data(self, decision):
+        cursor_analysis = self.db_connection.cursor()
+        cursor_performance = self.performance_db_connection.cursor()
+
+        # ai_stock_analysis_records에서 가장 최근 데이터의 Time 가져오기
+        cursor_analysis.execute("""
+        SELECT Time FROM ai_stock_analysis_records
+        WHERE Stock = ?
+        ORDER BY Time DESC LIMIT 1
+        """, (self.stock,))
+
+        latest_time = cursor_analysis.fetchone()
+        if not latest_time:
+            self.logger.error(f"No records found for {self.stock} in ai_stock_analysis_records")
+            return
+
+        decision_date = datetime.strptime(latest_time[0], '%Y-%m-%d %H:%M:%S').date()
+        next_date = decision_date + timedelta(days=1)
+
+        current_price = float(decision['CurrentPrice'])
+        expected_next_day_price = float(decision['ExpectedNextDayPrice'])
+
+        # 기존 데이터 확인
+        cursor_performance.execute("""
+        SELECT avg_current_price, avg_expected_next_day_price, count
+        FROM stock_performance
+        WHERE stock = ? AND date = ?
+        """, (self.stock, decision_date.strftime('%Y-%m-%d')))
+
+        existing_data = cursor_performance.fetchone()
+
+        if existing_data:
+            # 기존 데이터가 있으면 평균과 카운트 업데이트
+            old_avg_current, old_avg_expected, old_count = existing_data
+            new_count = old_count + 1
+            _avg_current_price = round(((old_avg_current * old_count) + current_price) / new_count, 2)
+            _avg_expected_next_day_price = round(((old_avg_expected * old_count) + expected_next_day_price) / new_count,
+                                                2)
+            cursor_performance.execute("""
+            UPDATE stock_performance
+            SET avg_current_price = ?,
+                avg_expected_next_day_price = ?,
+                count = ?
+            WHERE stock = ? AND date = ?
+            """, (
+            _avg_current_price, _avg_expected_next_day_price, new_count, self.stock, decision_date.strftime('%Y-%m-%d')))
+
+            self.logger.info(f"Performance data updated for {self.stock} on {decision_date}")
+        else:
+            # 새로운 데이터 삽입
+            _current_price= round(current_price, 2)
+            _expected_next_day_price = round(expected_next_day_price, 2)
+            cursor_performance.execute("""
+            INSERT INTO stock_performance 
+            (stock, date, next_date, avg_current_price, avg_expected_next_day_price, count)
+            VALUES (?, ?, ?, ?, ?, 1)
+            """, (self.stock, decision_date.strftime('%Y-%m-%d'), next_date.strftime('%Y-%m-%d'),
+            _current_price, _expected_next_day_price))
+
+            self.logger.info(f"New performance data inserted for {self.stock} on {decision_date}")
+
+        self.performance_db_connection.commit()
+
+        # 업데이트된 데이터 로깅
+        cursor_performance.execute("""
+        SELECT avg_current_price, avg_expected_next_day_price
+        FROM stock_performance
+        WHERE stock = ? AND date = ?
+        """, (self.stock, decision_date.strftime('%Y-%m-%d')))
+        updated_data = cursor_performance.fetchone()
+        if updated_data:
+            self.logger.info(
+                f"Updated/Inserted values - Avg Current Price: {updated_data[0]:.2f}, Avg Expected Next Day Price: {updated_data[1]:.2f}")
+
+        # 실제 주가 데이터 업데이트
+        self._fetch_actual_stock_prices()
+
+    def _fetch_actual_stock_prices(self):
+        cursor = self.performance_db_connection.cursor()
+
+        cursor.execute("""
+        SELECT DISTINCT stock, date, next_date, avg_expected_next_day_price
+        FROM stock_performance
+        WHERE actual_next_day_price IS NULL
+        """)
+        stocks_to_update = cursor.fetchall()
+
+        for stock, date, next_date, avg_expected_next_day_price in stocks_to_update:
+            next_date = datetime.strptime(next_date, '%Y-%m-%d').date()
+
+            if next_date > datetime.now().date():
+                self.logger.info(f"Skipping future date for {stock}: {next_date}")
+                continue
+
+            try:
+                ticker = yf.Ticker(stock)
+                # next_date의 종가를 가져오기 위해 다음 날짜까지의 데이터를 요청
+                hist = ticker.history(start=next_date, end=next_date + timedelta(days=1))
+
+                if not hist.empty:
+                    actual_price = round(hist['Close'].iloc[0], 2)  # 소수점 둘째자리까지 반올림
+                    price_difference = round(actual_price - avg_expected_next_day_price, 2)  # 소수점 둘째자리까지 반올림
+
+                    cursor.execute("""
+                    UPDATE stock_performance
+                    SET actual_next_day_price = ?,
+                        price_difference = ?
+                    WHERE stock = ? AND date = ?
+                    """, (actual_price, price_difference, stock, date))
+                    self.logger.info(
+                        f"Updated actual next day price for {stock} on {next_date}: {actual_price:.2f}, difference: {price_difference:.2f}")
+                else:
+                    self.logger.warning(f"No data available for {stock} on {next_date}")
+            except Exception as e:
+                self.logger.error(f"Error fetching data for {stock} on {next_date}: {str(e)}")
+
+        self.performance_db_connection.commit()
+        self.logger.info("Actual next day stock prices fetched and updated")
+
+
+
 
 # Slack Bot Configuration
 app = App(token=Config.SLACK_BOT_TOKEN)

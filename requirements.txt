@@ -14,3 +14,4 @@ logging
 sqlite3
 streamlit
 plotly
+yfinance
