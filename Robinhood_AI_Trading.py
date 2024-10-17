@@ -237,7 +237,8 @@ class AIStockAdvisorSystem:
         # Fetch news from multiple sources
         return {
             "google_news": self._get_news_from_google(),
-            "alpha_vantage_news": self._get_news_from_alpha_vantage()
+            "alpha_vantage_news": self._get_news_from_alpha_vantage(),
+            "robinhood_news": self._get_news_from_robinhood()
         }
 
     def _get_news_from_google(self):
@@ -265,6 +266,22 @@ class AIStockAdvisorSystem:
             return news_items
         except Exception as e:
             self.logger.error(f"Error during Google News API request: {e}")
+            return []
+
+    def _get_news_from_robinhood(self):
+        self.logger.info("Fetching news from Robinhood")
+        try:
+            news_data = r.robinhood.stocks.get_news(self.stock)
+            news_items = []
+            for item in news_data[:5]:  # Limit to 5 news items
+                news_items.append({
+                    'title': item['title'],
+                    'published_at': item['published_at']
+                })
+            self.logger.info(f"Retrieved {len(news_items)} news items from Robinhood")
+            return news_items
+        except Exception as e:
+            self.logger.error(f"Error fetching news from Robinhood: {str(e)}")
             return []
 
     def _get_news_from_alpha_vantage(self):
@@ -607,11 +624,11 @@ def process_trading(stock, say):
     say(f"Processing analysis for {stock}...")
 
     def _format_news(news: Dict[str, Any]) -> str:
-        # Format news items for Slack message
         formatted_news = []
         for source, items in news.items():
-            for item in items[:3]:  # Limiting to top 3 news items per source
-                formatted_news.append(f"- {item['title']} ({item.get('date', 'N/A')})")
+            formatted_news.append(f"{source.capitalize()}:")
+            for item in items[:5]:  # Limiting to top 3 news items per source
+                formatted_news.append(f"- {item['title']} ({item.get('date') or item.get('published_at') or 'N/A'})")
         return "\n".join(formatted_news)
 
     try:
