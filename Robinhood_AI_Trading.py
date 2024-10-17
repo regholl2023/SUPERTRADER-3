@@ -117,15 +117,26 @@ class AIStockAdvisorSystem:
             'Stock': 'count'  # 이것은 각 그룹의 레코드 수를 계산합니다
         }).rename(columns={'Stock': 'Count'})
 
-        # 4. 계산된 데이터를 ai_stock_performance.db에 입력
+        # 4. 계산된 데이터를 ai_stock_performance.db에 입력 (이미 존재하는 데이터는 건너뛰기)
         for (stock, date), row in aggregated.iterrows():
             next_date = (datetime.strptime(date, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
 
+            # 해당 stock과 date에 대한 데이터가 이미 존재하는지 확인
             cursor_performance.execute("""
-            INSERT OR REPLACE INTO stock_performance
-            (stock, date, next_date, avg_current_price, avg_expected_next_day_price, count)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """, (stock, date, next_date, row['CurrentPrice'], row['ExpectedNextDayPrice'], row['Count']))
+            SELECT COUNT(*) FROM stock_performance
+            WHERE stock = ? AND date = ?
+            """, (stock, date))
+
+            if cursor_performance.fetchone()[0] == 0:
+                # 데이터가 존재하지 않는 경우에만 새로운 데이터 삽입
+                cursor_performance.execute("""
+                INSERT INTO stock_performance
+                (stock, date, next_date, avg_current_price, avg_expected_next_day_price, count)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, (stock, date, next_date, row['CurrentPrice'], row['ExpectedNextDayPrice'], row['Count']))
+                self.logger.info(f"Inserted new performance data for {stock} on {date}")
+            else:
+                self.logger.info(f"Skipped existing performance data for {stock} on {date}")
 
         self.performance_db_connection.commit()
 
@@ -484,29 +495,26 @@ class AIStockAdvisorSystem:
             # 기존 데이터가 있으면 평균과 카운트 업데이트
             old_avg_current, old_avg_expected, old_count = existing_data
             new_count = old_count + 1
-            _avg_current_price = round(((old_avg_current * old_count) + current_price) / new_count, 2)
-            _avg_expected_next_day_price = round(((old_avg_expected * old_count) + expected_next_day_price) / new_count,
-                                                2)
+            new_avg_current = ((old_avg_current * old_count) + current_price) / new_count
+            new_avg_expected = ((old_avg_expected * old_count) + expected_next_day_price) / new_count
+
             cursor_performance.execute("""
             UPDATE stock_performance
             SET avg_current_price = ?,
                 avg_expected_next_day_price = ?,
                 count = ?
             WHERE stock = ? AND date = ?
-            """, (
-            _avg_current_price, _avg_expected_next_day_price, new_count, self.stock, decision_date.strftime('%Y-%m-%d')))
+            """, (new_avg_current, new_avg_expected, new_count, self.stock, decision_date.strftime('%Y-%m-%d')))
 
             self.logger.info(f"Performance data updated for {self.stock} on {decision_date}")
         else:
             # 새로운 데이터 삽입
-            _current_price= round(current_price, 2)
-            _expected_next_day_price = round(expected_next_day_price, 2)
             cursor_performance.execute("""
             INSERT INTO stock_performance 
             (stock, date, next_date, avg_current_price, avg_expected_next_day_price, count)
             VALUES (?, ?, ?, ?, ?, 1)
             """, (self.stock, decision_date.strftime('%Y-%m-%d'), next_date.strftime('%Y-%m-%d'),
-            _current_price, _expected_next_day_price))
+                  current_price, expected_next_day_price))
 
             self.logger.info(f"New performance data inserted for {self.stock} on {decision_date}")
 
@@ -520,11 +528,11 @@ class AIStockAdvisorSystem:
         """, (self.stock, decision_date.strftime('%Y-%m-%d')))
         updated_data = cursor_performance.fetchone()
         if updated_data:
-            self.logger.info(
-                f"Updated/Inserted values - Avg Current Price: {updated_data[0]:.2f}, Avg Expected Next Day Price: {updated_data[1]:.2f}")
+            self.logger.info(f"Updated/Inserted values - Avg Current Price: {updated_data[0]:.2f}, Avg Expected Next Day Price: {updated_data[1]:.2f}")
 
         # 실제 주가 데이터 업데이트
         self._fetch_actual_stock_prices()
+
 
     def _fetch_actual_stock_prices(self):
         cursor = self.performance_db_connection.cursor()
