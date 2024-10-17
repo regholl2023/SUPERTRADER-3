@@ -558,7 +558,7 @@ class AIStockAdvisorSystem:
                 if not hist.empty:
                     actual_price = round(hist['Close'].iloc[0], 2)
                     price_difference = round(actual_price - avg_expected_next_day_price, 2)
-                    error_percentage = round((price_difference / actual_price) * 100, 2) if actual_price != 0 else 0
+                    error_percentage = abs(round((price_difference / actual_price) * 100, 2)) if actual_price != 0 else 0
 
                     cursor.execute("""
                     UPDATE stock_performance
