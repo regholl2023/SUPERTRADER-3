@@ -11,8 +11,10 @@ selenium
 webdriver-manager
 youtube-transcript-api
 logging
-sqlite3
 streamlit
 plotly
 yfinance
 matplotlib
+deep_translator
+slack_bolt
+streamlit

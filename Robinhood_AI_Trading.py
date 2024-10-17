@@ -254,7 +254,7 @@ class AIStockAdvisorSystem:
     # 2-7 Data Collection - Youtube
     def get_youtube_transcript(self):
         # Fetch YouTube video transcript
-        video_id = 'rWl9ehSIiXc'
+        video_id = 'pbNpjtsQVA0'
         self.logger.info(f"Fetching YouTube transcript for video ID: {video_id}")
         try:
             transcript_data = YouTubeTranscriptApi.get_transcript(video_id)
@@ -531,7 +531,13 @@ class AIStockAdvisorSystem:
         # Perform AI-based Stock analysis
         monthly_df, daily_df = self.get_chart_data()
         news = self.get_news()
-        youtube_transcript = self.get_youtube_transcript()
+        # youtube_transcript = self.get_youtube_transcript()
+        # f = open("strategy.txt","w",encoding="utf-8")
+        # f.write(youtube_transcript)
+        f = open("strategy.txt", "r")
+        youtube_transcript = f.read()
+        f.close()
+
         fgi = self.get_fear_and_greed_index()
         current_price = self.get_current_price()
         vix_index = self.get_vix_index()
@@ -556,7 +562,7 @@ class AIStockAdvisorSystem:
                         - Current stock price: ${current_price}
                         - Current VIX INDEX: {vix_index}
 
-                        Particularly important is to always refer to the trading method of 'Mark Minervini', a legendary stock investor, to assess the current situation and make trading decisions. Mark Minervini's trading method is as follows:
+                        Particularly important is to always refer to the trading method of 'Larry Williams', a legendary stock investor, to assess the current situation and make trading decisions. Larry Williams's trading method is as follows:
 
                         {youtube_transcript}
 
