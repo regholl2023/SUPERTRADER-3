@@ -9,6 +9,8 @@ from typing import Dict, Any
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 import yfinance as yf
+import schedule
+import time
 
 import pyotp
 import robin_stocks as r
@@ -466,7 +468,6 @@ class AIStockAdvisorSystem:
         # 실제 주가 데이터 업데이트
         self._fetch_actual_stock_prices()
 
-
     def _fetch_actual_stock_prices(self):
         cursor = self.performance_db_connection.cursor()
 
@@ -486,30 +487,42 @@ class AIStockAdvisorSystem:
 
             try:
                 ticker = yf.Ticker(stock)
-                hist = ticker.history(start=next_date, end=next_date + timedelta(days=1))
+                actual_price = None
+                days_to_check = 5  # 최대 5일까지 확인
 
-                if not hist.empty:
-                    actual_price = round(hist['Close'].iloc[0], 2)
+                for i in range(days_to_check):
+                    check_date = next_date + timedelta(days=i)
+                    hist = ticker.history(start=check_date, end=check_date + timedelta(days=1))
+
+                    if not hist.empty:
+                        actual_price = round(hist['Close'].iloc[0], 2)
+                        break
+
+                if actual_price is not None:
                     price_difference = round(actual_price - avg_expected_next_day_price, 2)
-                    error_percentage = abs(round((price_difference / actual_price) * 100, 2)) if actual_price != 0 else 0
+                    error_percentage = abs(
+                        round((price_difference / actual_price) * 100, 2)) if actual_price != 0 else 0
 
                     cursor.execute("""
                     UPDATE stock_performance
                     SET actual_next_day_price = ?,
                         price_difference = ?,
-                        error_percentage = ?
+                        error_percentage = ?,
+                        next_date = ?
                     WHERE stock = ? AND date = ?
-                    """, (actual_price, price_difference, error_percentage, stock, date))
+                    """, (
+                    actual_price, price_difference, error_percentage, check_date.strftime('%Y-%m-%d'), stock, date))
                     self.logger.info(
-                        f"Updated actual next day price for {stock} on {next_date}: {actual_price:.2f}, "
-                        f"difference: {price_difference:.2f}, error percentage: {error_percentage:.2f}%")
+                        f"Updated actual price for {stock}. Original next_date: {next_date}, "
+                        f"Updated next_date: {check_date}, Price: {actual_price:.2f}, "
+                        f"Difference: {price_difference:.2f}, Error percentage: {error_percentage:.2f}%")
                 else:
-                    self.logger.warning(f"No data available for {stock} on {next_date}")
+                    self.logger.warning(f"No data available for {stock} within {days_to_check} days after {next_date}")
             except Exception as e:
-                self.logger.error(f"Error fetching data for {stock} on {next_date}: {str(e)}")
+                self.logger.error(f"Error fetching data for {stock} starting from {next_date}: {str(e)}")
 
         self.performance_db_connection.commit()
-        self.logger.info("Actual next day stock prices fetched and updated")
+        self.logger.info("Actual stock prices fetched and updated")
 
     def _update_error_percentage(self):
         cursor = self.performance_db_connection.cursor()
@@ -641,6 +654,49 @@ class AIStockAdvisorSystem:
 
         return result, reason_kr, news, fgi, current_price, vix_index
 
+    def analyze_and_post_to_slack(self):
+        result, reason_kr, news, fgi, current_price, vix_index = self.ai_stock_analysis()
+
+        response = f"""Scheduled AI Trading Decision for {self.stock}:
+        Decision: {result.decision}
+        Percentage: {result.percentage}%
+        Current Price: ${current_price:.2f}
+        Predicted NextDay Price: ${result.expected_next_day_price:.2f}
+        VIX INDEX: {vix_index}
+        Reason: {result.reason}
+        Reason_KO: {reason_kr}
+        Recent News:
+        {self._format_news(news)}
+
+        Fear and Greed Index:
+        Value: {fgi['value']:.2f}
+        Description: {fgi['description']}
+        Last Update: {fgi['last_update']}"""
+
+        # Slack에 메시지 전송
+        self.post_to_slack(response)
+
+    def _format_news(self, news: Dict[str, Any]) -> str:
+        formatted_news = []
+        for source, items in news.items():
+            formatted_news.append(f"{source.capitalize()}:")
+            for item in items[:5]:
+                formatted_news.append(f"- {item['title']} ({item.get('date') or item.get('published_at') or 'N/A'})")
+        return "\n".join(formatted_news)
+
+    def post_to_slack(self, message):
+        webhook_url = Config.SLACK_WEBHOOK_URL
+        payload = {"text": message}
+        try:
+            response = requests.post(webhook_url, json=payload)
+            response.raise_for_status()
+            self.logger.info("Message sent to Slack successfully")
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Failed to send message to Slack: {str(e)}")
+            if hasattr(e, 'response'):
+                self.logger.error(f"Response status code: {e.response.status_code}")
+                self.logger.error(f"Response content: {e.response.text}")
+
 
 # Slack Bot Configuration
 app = App(token=Config.SLACK_BOT_TOKEN)
@@ -655,14 +711,6 @@ def process_trading(stock, say):
     logger.info(f"Starting the stock trading analysis for {stock}")
     say(f"Processing analysis for {stock}...")
 
-    def _format_news(news: Dict[str, Any]) -> str:
-        formatted_news = []
-        for source, items in news.items():
-            formatted_news.append(f"{source.capitalize()}:")
-            for item in items[:5]:  # Limiting to top 3 news items per source
-                formatted_news.append(f"- {item['title']} ({item.get('date') or item.get('published_at') or 'N/A'})")
-        return "\n".join(formatted_news)
-
     try:
         analyzer = AIStockAdvisorSystem(stock)
         result, reason_kr, news, fgi, current_price, vix_index = analyzer.ai_stock_analysis()
@@ -676,7 +724,7 @@ def process_trading(stock, say):
         Reason: {result.reason}
         Reason_KO: {reason_kr}
         Recent News:
-        {_format_news(news)}
+        {analyzer._format_news(news)}
 
         Fear and Greed Index:
         Value: {fgi['value']:.2f}
@@ -708,11 +756,20 @@ def handle_message(event, logger):
     # Handle general message events (for logging purposes)
     logger.debug(f"Received message event: {event}")
 
+
+# 메인 함수에 테스트 코드 추가
 def main():
-    # Main execution function
     handler = SocketModeHandler(app, Config.SLACK_APP_TOKEN)
+
+    # Slack 이벤트 리스너 시작
     logger.info("Starting AI Stock Advisor")
     handler.start()
+
+    # 스케줄 실행
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
 
 if __name__ == "__main__":
     main()

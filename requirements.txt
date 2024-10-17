@@ -18,3 +18,4 @@ matplotlib
 deep_translator
 slack_bolt
 streamlit
+schedule
