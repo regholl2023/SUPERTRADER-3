@@ -78,12 +78,11 @@ The Slack bot handles the following events:
 - `app_mention`: Triggered when the bot is mentioned
 - `message`: General message events (for logging purposes)
 
-## System Flowchart
 
-Here's a simplified flowchart of how the AI Stock Advisor system works:
+## AI Stock Advisor System Flowchart
 
-# <antArtifact identifier="ai-stock-advisor-flowchart" type="application/vnd.ant.mermaid" title="AI Stock Advisor System Flowchart">
- graph TD
+```mermaid
+flowchart TD
     A[Start] --> B[Receive Stock Symbol]
     B --> C[Collect Data]
     C --> D[Calculate Technical Indicators]
@@ -100,3 +99,4 @@ Here's a simplified flowchart of how the AI Stock Advisor system works:
     J --> K[Record Decision in Database]
     K --> L[Post Results to Slack]
     L --> M[End]
+```
