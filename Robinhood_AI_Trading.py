@@ -322,36 +322,36 @@ class AIStockAdvisorSystem:
         cursor_analysis = self.db_connection.cursor()
         cursor_performance = self.performance_db_connection.cursor()
 
-        # 1. ai_stock_analysis_records에서 모든 데이터 가져오기
+        # Fetch all data from ai_stock_analysis_records
         cursor_analysis.execute("""
         SELECT Stock, DATE(Time) as Date, CurrentPrice, ExpectedNextDayPrice
         FROM ai_stock_analysis_records
         """)
         records = cursor_analysis.fetchall()
 
-        # 2. 데이터를 DataFrame으로 변환하고 Stock과 Date로 그룹화
+        # Convert data to DataFrame and group by Stock and Date
         df = pd.DataFrame(records, columns=['Stock', 'Date', 'CurrentPrice', 'ExpectedNextDayPrice'])
         grouped = df.groupby(['Stock', 'Date'])
 
-        # 3. 각 그룹에 대해 평균 계산
+        # Calculate average for each group
         aggregated = grouped.agg({
             'CurrentPrice': 'mean',
             'ExpectedNextDayPrice': 'mean',
-            'Stock': 'count'  # 이것은 각 그룹의 레코드 수를 계산합니다
+            'Stock': 'count'
         }).rename(columns={'Stock': 'Count'})
 
-        # 4. 계산된 데이터를 ai_stock_performance.db에 입력 (이미 존재하는 데이터는 건너뛰기)
+        # Insert calculated data into ai_stock_performance.db (skip existing data)
         for (stock, date), row in aggregated.iterrows():
             next_date = (datetime.strptime(date, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
 
-            # 해당 stock과 date에 대한 데이터가 이미 존재하는지 확인
+            # Check if data already exists for the given stock and date
             cursor_performance.execute("""
             SELECT COUNT(*) FROM stock_performance
             WHERE stock = ? AND date = ?
             """, (stock, date))
 
             if cursor_performance.fetchone()[0] == 0:
-                # 데이터가 존재하지 않는 경우에만 새로운 데이터 삽입
+                # Insert new data only if it doesn't already exist
                 cursor_performance.execute("""
                 INSERT INTO stock_performance
                 (stock, date, next_date, avg_current_price, avg_expected_next_day_price, count)
@@ -363,7 +363,7 @@ class AIStockAdvisorSystem:
 
         self.performance_db_connection.commit()
 
-        # 5. & 6. next_date 기반으로 실제 주식 종가 가져와 저장
+        # Fetch and store actual stock closing prices based on next_date
         self._fetch_actual_stock_prices()
 
         self.logger.info("Performance data migration and update completed")
@@ -399,7 +399,7 @@ class AIStockAdvisorSystem:
         cursor_analysis = self.db_connection.cursor()
         cursor_performance = self.performance_db_connection.cursor()
 
-        # ai_stock_analysis_records에서 가장 최근 데이터의 Time 가져오기
+        # Get the Time of the most recent data from ai_stock_analysis_records
         cursor_analysis.execute("""
         SELECT Time FROM ai_stock_analysis_records
         WHERE Stock = ?
@@ -417,7 +417,7 @@ class AIStockAdvisorSystem:
         current_price = float(decision['CurrentPrice'])
         expected_next_day_price = float(decision['ExpectedNextDayPrice'])
 
-        # 기존 데이터 확인
+        # Check existing data
         cursor_performance.execute("""
         SELECT avg_current_price, avg_expected_next_day_price, count
         FROM stock_performance
@@ -427,7 +427,7 @@ class AIStockAdvisorSystem:
         existing_data = cursor_performance.fetchone()
 
         if existing_data:
-            # 기존 데이터가 있으면 평균과 카운트 업데이트
+            # If existing data is found, update average and count
             old_avg_current, old_avg_expected, old_count = existing_data
             new_count = old_count + 1
             new_avg_current = ((old_avg_current * old_count) + current_price) / new_count
@@ -443,7 +443,7 @@ class AIStockAdvisorSystem:
 
             self.logger.info(f"Performance data updated for {self.stock} on {decision_date}")
         else:
-            # 새로운 데이터 삽입
+            # Insert new data
             cursor_performance.execute("""
             INSERT INTO stock_performance 
             (stock, date, next_date, avg_current_price, avg_expected_next_day_price, count)
@@ -455,7 +455,7 @@ class AIStockAdvisorSystem:
 
         self.performance_db_connection.commit()
 
-        # 업데이트된 데이터 로깅
+        # Log updated data
         cursor_performance.execute("""
         SELECT avg_current_price, avg_expected_next_day_price
         FROM stock_performance
@@ -465,7 +465,7 @@ class AIStockAdvisorSystem:
         if updated_data:
             self.logger.info(f"Updated/Inserted values - Avg Current Price: {updated_data[0]:.2f}, Avg Expected Next Day Price: {updated_data[1]:.2f}")
 
-        # 실제 주가 데이터 업데이트
+        # Update actual stock price data
         self._fetch_actual_stock_prices()
 
     def _fetch_actual_stock_prices(self):
@@ -488,7 +488,9 @@ class AIStockAdvisorSystem:
             try:
                 ticker = yf.Ticker(stock)
                 actual_price = None
-                days_to_check = 5  # 최대 5일까지 확인
+
+                # Check up to a maximum of 5 days
+                days_to_check = 5
 
                 for i in range(days_to_check):
                     check_date = next_date + timedelta(days=i)
@@ -673,7 +675,7 @@ class AIStockAdvisorSystem:
         Description: {fgi['description']}
         Last Update: {fgi['last_update']}"""
 
-        # Slack에 메시지 전송
+        # Send message to Slack
         self.post_to_slack(response)
 
     def _format_news(self, news: Dict[str, Any]) -> str:
@@ -756,15 +758,12 @@ def handle_message(event, logger):
     # Handle general message events (for logging purposes)
     logger.debug(f"Received message event: {event}")
 
-
-# 메인 함수에 테스트 코드 추가
 def main():
     handler = SocketModeHandler(app, Config.SLACK_APP_TOKEN)
 
     # Slack 이벤트 리스너 시작
     logger.info("Starting AI Stock Advisor")
     handler.start()
-
 
 if __name__ == "__main__":
     main()
