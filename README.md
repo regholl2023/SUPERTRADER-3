@@ -82,8 +82,8 @@ The Slack bot handles the following events:
 
 Here's a simplified flowchart of how the AI Stock Advisor system works:
 
-<antArtifact identifier="ai-stock-advisor-flowchart" type="application/vnd.ant.mermaid" title="AI Stock Advisor System Flowchart">
-graph TD
+# <antArtifact identifier="ai-stock-advisor-flowchart" type="application/vnd.ant.mermaid" title="AI Stock Advisor System Flowchart">
+ graph TD
     A[Start] --> B[Receive Stock Symbol]
     B --> C[Collect Data]
     C --> D[Calculate Technical Indicators]
