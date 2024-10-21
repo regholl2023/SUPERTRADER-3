@@ -38,11 +38,15 @@ def load_performance_data():
     return df
 
 
+LANGUAGES = {'afrikaans': 'af', 'albanian': 'sq', 'amharic': 'am', 'arabic': 'ar', 'armenian': 'hy', 'assamese': 'as', 'aymara': 'ay', 'azerbaijani': 'az', 'bambara': 'bm', 'basque': 'eu', 'belarusian': 'be', 'bengali': 'bn', 'bhojpuri': 'bho', 'bosnian': 'bs', 'bulgarian': 'bg', 'catalan': 'ca', 'cebuano': 'ceb', 'chichewa': 'ny', 'chinese (simplified)': 'zh-CN', 'chinese (traditional)': 'zh-TW', 'corsican': 'co', 'croatian': 'hr', 'czech': 'cs', 'danish': 'da', 'dhivehi': 'dv', 'dogri': 'doi', 'dutch': 'nl', 'english': 'en', 'esperanto': 'eo', 'estonian': 'et', 'ewe': 'ee', 'filipino': 'tl', 'finnish': 'fi', 'french': 'fr', 'frisian': 'fy', 'galician': 'gl', 'georgian': 'ka', 'german': 'de', 'greek': 'el', 'guarani': 'gn', 'gujarati': 'gu', 'haitian creole': 'ht', 'hausa': 'ha', 'hawaiian': 'haw', 'hebrew': 'iw', 'hindi': 'hi', 'hmong': 'hmn', 'hungarian': 'hu', 'icelandic': 'is', 'igbo': 'ig', 'ilocano': 'ilo', 'indonesian': 'id', 'irish': 'ga', 'italian': 'it', 'japanese': 'ja', 'javanese': 'jw', 'kannada': 'kn', 'kazakh': 'kk', 'khmer': 'km', 'kinyarwanda': 'rw', 'konkani': 'gom', 'korean': 'ko', 'krio': 'kri', 'kurdish (kurmanji)': 'ku', 'kurdish (sorani)': 'ckb', 'kyrgyz': 'ky', 'lao': 'lo', 'latin': 'la', 'latvian': 'lv', 'lingala': 'ln', 'lithuanian': 'lt', 'luganda': 'lg', 'luxembourgish': 'lb', 'macedonian': 'mk', 'maithili': 'mai', 'malagasy': 'mg', 'malay': 'ms', 'malayalam': 'ml', 'maltese': 'mt', 'maori': 'mi', 'marathi': 'mr', 'meiteilon (manipuri)': 'mni-Mtei', 'mizo': 'lus', 'mongolian': 'mn', 'myanmar': 'my', 'nepali': 'ne', 'norwegian': 'no', 'odia (oriya)': 'or', 'oromo': 'om', 'pashto': 'ps', 'persian': 'fa', 'polish': 'pl', 'portuguese': 'pt', 'punjabi': 'pa', 'quechua': 'qu', 'romanian': 'ro', 'russian': 'ru', 'samoan': 'sm', 'sanskrit': 'sa', 'scots gaelic': 'gd', 'sepedi': 'nso', 'serbian': 'sr', 'sesotho': 'st', 'shona': 'sn', 'sindhi': 'sd', 'sinhala': 'si', 'slovak': 'sk', 'slovenian': 'sl', 'somali': 'so', 'spanish': 'es', 'sundanese': 'su', 'swahili': 'sw', 'swedish': 'sv', 'tajik': 'tg', 'tamil': 'ta', 'tatar': 'tt', 'telugu': 'te', 'thai': 'th', 'tigrinya': 'ti', 'tsonga': 'ts', 'turkish': 'tr', 'turkmen': 'tk', 'twi': 'ak', 'ukrainian': 'uk', 'urdu': 'ur', 'uyghur': 'ug', 'uzbek': 'uz', 'vietnamese': 'vi', 'welsh': 'cy', 'xhosa': 'xh', 'yiddish': 'yi', 'yoruba': 'yo', 'zulu': 'zu'}
 # Translation function
 @st.cache_data
-def translate_to_korean(text):
-    translator = GoogleTranslator(source='auto', target='ko')
-    return translator.translate(text)
+def translate_text(text, target_lang):
+    if target_lang != 'en':
+        translator = GoogleTranslator(source='auto', target=target_lang)
+        return translator.translate(text)
+    else:
+        return text
 
 
 # Performance metrics calculation
@@ -57,10 +61,10 @@ def calculate_performance_metrics(df):
         avg_error = df['Error Percentage (%)'].abs().mean()
         return accuracy, avg_error
     else:
-        return None, None  # 유효한 예측이 없을 경우 (None, None) 반환
+        return None, None
 
 
-# 데이터프레임 컬럼 이름 변경
+# Rename dataframe columns
 def rename_performance_columns(df):
     df = df.rename(columns={
         'date': 'Date',
@@ -75,7 +79,7 @@ def rename_performance_columns(df):
     return df
 
 
-# 데이터프레임 컬럼 이름 변경
+# Rename dataframe columns
 def rename_analysis_columns(df):
     df = df.rename(columns={
         'Time': 'Date & Time',
@@ -90,19 +94,19 @@ def rename_analysis_columns(df):
     return df
 
 def filter_data(df, stock):
-    if stock != "전체 주식":
+    if stock != "All Stocks":
         return df[df['Stock Name'] == stock]
     return df
 
 
-# 오늘의 주식 추천 함수
+# Today's stock recommendations function
 def get_todays_recommendations(df):
     today = datetime.now().date()
     recommendations = df[df['Date'].dt.date == today].copy()
     recommendations = recommendations[
         recommendations['Avg Expected Next Day Price ($)'] > recommendations['Avg Current Price ($)']]
 
-    # 예상 수익과 수익률 계산
+    # Calculate expected profit and rate of return
     recommendations['Expected Profit ($)'] = recommendations['Avg Expected Next Day Price ($)'] - recommendations[
         'Avg Current Price ($)']
     recommendations['Expected Return (%)'] = (recommendations['Expected Profit ($)'] / recommendations[
@@ -112,7 +116,7 @@ def get_todays_recommendations(df):
                             'Expected Profit ($)', 'Expected Return (%)']]
 
 
-# 스타일링 함수
+# styling functions
 def style_recommendations(df):
     return df.style.format({
         'Avg Current Price ($)': '${:.2f}',
@@ -121,7 +125,7 @@ def style_recommendations(df):
         'Expected Return (%)': '{:.2f}%'
     })
 
-# 날짜 형식 변환 함수
+# Date format conversion function
 def format_date(date):
     if isinstance(date, str):
         return date
@@ -131,7 +135,7 @@ def format_date(date):
         return ''
 
 
-# 조건부 스타일링 함수
+# Conditional styling functions
 def style_dataframe(df):
     def highlight_positive_expectation(row):
         if row['Avg Expected Next Day Price ($)'] > row['Avg Current Price ($)'] and row['Price Difference ($)'] >= 0:
@@ -150,16 +154,8 @@ def style_dataframe(df):
         'Error Percentage (%)': '{:.2f}%'
     })
 
-
-# 한국어 번역 함수
-@st.cache_data
-def translate_to_korean(text):
-    translator = GoogleTranslator(source='auto', target='ko')
-    return translator.translate(text)
-
-
-# 최근 주식 조회 내역 스타일링 함수 수정
-def style_recent_queries(df):
+# Modify recent stock view history styling function
+def style_recent_queries(df, target_lang):
     today = datetime.now().date()
 
     def highlight_buy_today(row):
@@ -168,12 +164,12 @@ def style_recent_queries(df):
         else:
             return [''] * len(row)
 
-    # Reason 열을 한국어로 번역
-    df['Reason_KR'] = df['Reason'].apply(translate_to_korean)
+    # Translate Reason column to target language
+    df['Translated_Reason'] = df['Reason'].apply(lambda x: translate_text(x, target_lang))
 
-    # 열 순서 변경
+    # Change column order
     columns = ['Date & Time', 'Stock Name', 'AI Decision', 'Decision Confidence (%)',
-               'Current Price ($)', 'Expected Next Day Price ($)', 'Price Difference ($)', 'Reason_KR']
+               'Current Price ($)', 'Expected Next Day Price ($)', 'Price Difference ($)', 'Translated_Reason']
     df = df[columns]
 
     return df.style.apply(highlight_buy_today, axis=1) \
@@ -185,67 +181,75 @@ def style_recent_queries(df):
         'Price Difference ($)': '${:.2f}'
     })
 
-# 오늘과 어제 날짜 계산 함수
+# Today and yesterday date calculation function
 def get_today_and_yesterday():
     today = datetime.now().date()
     yesterday = today - timedelta(days=1)
     return today, yesterday
 
-# 최근 주식 조회 내역 필터링 함수 수정
+# Modification of recent stock inquiry history filtering function
 def filter_recent_queries(df, selected_stock):
     today, yesterday = get_today_and_yesterday()
-    if selected_stock != "전체 주식":
+    if selected_stock != "All Stocks":
         return df[(df['Date & Time'].dt.date.isin([today, yesterday])) &
                   (df['Stock Name'] == selected_stock)].sort_values('Date & Time', ascending=False)
     else:
         return df[df['Date & Time'].dt.date.isin([today, yesterday])].sort_values('Date & Time', ascending=False)
 
-
-
 # Main app
 def main():
     st.title("AI Stock Advisor Dashboard")
 
-    # 데이터 로드
+    # data load
     df_analysis = load_analysis_data()
     df_analysis = rename_analysis_columns(df_analysis)
     df_performance = load_performance_data()
     df_performance = rename_performance_columns(df_performance)
 
-    # 날짜 열 형식 변환
+    # Convert date column format
     df_performance['Date'] = pd.to_datetime(df_performance['Date'], errors='coerce')
     df_performance['Next Date'] = pd.to_datetime(df_performance['Next Date'], errors='coerce')
 
-    # 주식 선택 옵션과 예측 정확도를 나란히 배치
-    col1, col2 = st.columns([3, 2])
-
+    # Stock picking options and forecast accuracy side by side
+    col1, col2, col3 = st.columns([3, 2, 1])
     with col1:
-        stock_options = ["전체 주식"] + sorted(df_analysis['Stock Name'].unique().tolist())
-        selected_stock = st.selectbox("주식 선택", stock_options)
+        stock_options = ["All Stocks"] + sorted(df_analysis['Stock Name'].unique().tolist())
+        selected_stock = st.selectbox("Stock selection", stock_options, key="stock_selection")
 
-    # 데이터 필터링
+    # data filtering
     filtered_analysis = filter_data(df_analysis, selected_stock)
     filtered_performance = filter_data(df_performance, selected_stock)
 
-    # 예측 정확도 계산 및 표시
+    # Calculate and display prediction accuracy
     with col2:
-        accuracy, _ = calculate_performance_metrics(filtered_performance)
+        accuracy, _ = calculate_performance_metrics(df_performance)
         if accuracy is not None:
-            st.write("예측 정확도")
+            st.write("Prediction Accuracy")
             col2_1, col2_2 = st.columns([7, 3])
             with col2_1:
                 st.progress(accuracy / 100)
             with col2_2:
                 st.write(f"{int(round(accuracy))}%")
         else:
-            st.write("예측 정확도: 데이터 없음")
+            st.write("Prediction Accuracy: no data")
+
+    with st.sidebar:
+        selected_language = st.selectbox(
+            "Select Language",
+            options=list(LANGUAGES.keys()),
+            index=list(LANGUAGES.keys()).index('english'),
+            format_func=lambda x: x.capitalize(),
+            key="sidebar_language_selection"
+        )
+
+    target_lang = LANGUAGES[selected_language]
 
     # 오늘의 추천 주식 필터링
     todays_recommendations = get_todays_recommendations(df_performance)
 
     # Auto-refresh settings
-    auto_refresh = st.sidebar.checkbox("자동 새로고침 활성화", value=True)
-    refresh_interval = st.sidebar.number_input("새로고침 간격 (초)", min_value=1, value=5)
+    auto_refresh = st.sidebar.checkbox("Enable auto-refresh", value=True)
+    refresh_interval = st.sidebar.number_input("Refresh interval (seconds)", min_value=1, value=5)
 
     # Create placeholder
     placeholder = st.empty()
@@ -253,43 +257,49 @@ def main():
     iteration = 0
     while True:
         with placeholder.container():
-            # 오늘의 주식 추천
-            today = datetime.now().strftime("%Y년 %m월 %d일")
-            st.subheader(f"오늘의 AI 추천 주식 ({today})")
+            # Today's Stock Recommendations
+            today = datetime.now().strftime("%m/%d/%Y")
+            st.subheader(f"Today's AI recommended stocks ({today})")
             if not todays_recommendations.empty:
                 st.dataframe(style_recommendations(todays_recommendations), hide_index=True)
             else:
-                st.write("오늘 추천된 주식이 없습니다.")
+                st.write("There are no stocks recommended today.")
 
             # Recent stock query history table
-            st.subheader("AI 주식 예측 내역")
+            st.subheader(f"AI prediction history for {selected_stock}")
             recent_queries = filter_recent_queries(filtered_analysis, selected_stock)
             if not recent_queries.empty:
                 st.dataframe(
-                    style_recent_queries(recent_queries),
+                    style_recent_queries(recent_queries, target_lang),  # target_lang 인자 추가
                     hide_index=True,
                     key=f"analysis_history_{iteration}"
                 )
             else:
-                if selected_stock != "전체 주식":
-                    st.write(f"{selected_stock}에 대한 최근 2일간의 주식 조회 내역이 없습니다.")
+                if selected_stock != "All Stocks":
+                    st.write(f"There are no stock searches for {selected_stock} in the last 2 days.")
                 else:
-                    st.write("최근 2일간의 주식 조회 내역이 없습니다.")
+                    st.write("There is no stock inquiry history for the last 2 days.")
 
-            # Recent reasons for AI decisions by stock (마지막 섹션)
-            st.subheader("주식별 AI 판단 내용")
-            if selected_stock != "전체 주식":
+            # Recent reasons for AI decisions by stock
+            # AI Decision Details
+            st.subheader("AI Decision Details")
+            if selected_stock != "All Stocks":
                 st.write(f"**{selected_stock}**")
-                recent_reasons = filtered_analysis[['Date & Time', 'AI Decision', 'Decision Confidence (%)', 'Reason']].sort_values('Date & Time', ascending=False).head(5)
+                recent_reasons = df_analysis[df_analysis['Stock Name'] == selected_stock][
+                    ['Date & Time', 'AI Decision', 'Decision Confidence (%)', 'Reason']].sort_values('Date & Time',
+                                                                                                     ascending=False).head(
+                    5)
                 for idx, row in recent_reasons.iterrows():
-                    reason_kr = translate_to_korean(row['Reason'])
+                    translated_reason = translate_text(row['Reason'], target_lang)
                     st.write(
                         f"- {row['Date & Time']} - {row['AI Decision'].capitalize()} ({row['Decision Confidence (%)']}%)"
                     )
-                    st.write(f"  {reason_kr}")
+                    st.write(f"  {translated_reason}")
                     st.write("")
             else:
-                st.write("특정 주식을 선택하면 해당 주식의 최근 상황을 볼 수 있습니다.")
+                message = "If you select a specific stock, you can see the latest status of that stock."
+                translated_message = translate_text(message, target_lang)
+                st.write(translated_message)
 
         # If auto-refresh is enabled, run again after a specified time
         if auto_refresh:

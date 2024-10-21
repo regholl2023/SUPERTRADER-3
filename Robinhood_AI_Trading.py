@@ -5,18 +5,16 @@ import logging
 import sqlite3
 import requests
 import pandas as pd
+import yfinance as yf
+import pyotp
+import robin_stocks as r
+import fear_and_greed
+
 from typing import Dict, Any
 from datetime import datetime, timedelta
 from pydantic import BaseModel
-import yfinance as yf
-import schedule
-import time
-
-import pyotp
-import robin_stocks as r
 from dotenv import load_dotenv
 from openai import OpenAI
-import fear_and_greed
 from deep_translator import GoogleTranslator
 from youtube_transcript_api import YouTubeTranscriptApi
 from slack_bolt import App
@@ -48,8 +46,9 @@ class TradingDecision(BaseModel):
 
 # AI Stock Advisor System class
 class AIStockAdvisorSystem:
-    def __init__(self, stock: str):
+    def __init__(self, stock: str, lang='en'):
         self.stock = stock
+        self.lang = lang
         self.logger = logging.getLogger(f"{stock}_analyzer")
         self.login = self._get_login()
         self.openai_client = OpenAI(api_key=Config.OPENAI_API_KEY)
@@ -267,17 +266,17 @@ class AIStockAdvisorSystem:
             self.logger.error(f"Error fetching YouTube transcript: {str(e)}")
             return f"An error occurred: {str(e)}"
 
-    def _translate_to_korean(self, text):
-        # Translate text to Korean
-        self.logger.info("Translating text to Korean")
+    def _translate_to_language(self, text, lang='en'):
+        self.logger.info(f"Translating text to {lang}")
         try:
-            translator = GoogleTranslator(source='auto', target='ko')
+            translator = GoogleTranslator(source='auto', target=lang)
             translated = translator.translate(text)
             self.logger.info("Translation successful")
             return translated
         except Exception as e:
             self.logger.error(f"Error during translation: {e}")
             return text
+
 
     # 3. Database - ai_stock_analysis_records & ai_stock_performance
     def _setup_database(self, db_name: str):
@@ -635,7 +634,7 @@ class AIStockAdvisorSystem:
         result = TradingDecision.model_validate_json(response.choices[0].message.content)
         self.logger.info("Received response from OpenAI")
 
-        reason_kr = self._translate_to_korean(result.reason)
+        reason_translated = self._translate_to_language(result.reason, self.lang)
 
         self.logger.info(f"### AI Decision: {result.decision.upper()} ###")
         self.logger.info(f"### Percentage: {result.percentage} ###")
@@ -654,10 +653,10 @@ class AIStockAdvisorSystem:
             'VIX_INDEX': vix_index
         })
 
-        return result, reason_kr, news, fgi, current_price, vix_index
+        return result, reason_translated, news, fgi, current_price, vix_index
 
     def analyze_and_post_to_slack(self):
-        result, reason_kr, news, fgi, current_price, vix_index = self.ai_stock_analysis()
+        result, reason_translated, news, fgi, current_price, vix_index = self.ai_stock_analysis()
 
         response = f"""Scheduled AI Trading Decision for {self.stock}:
         Decision: {result.decision}
@@ -666,7 +665,7 @@ class AIStockAdvisorSystem:
         Predicted NextDay Price: ${result.expected_next_day_price:.2f}
         VIX INDEX: {vix_index}
         Reason: {result.reason}
-        Reason_KO: {reason_kr}
+        Reason_Translated: {reason_translated}
         Recent News:
         {self._format_news(news)}
 
@@ -703,35 +702,53 @@ class AIStockAdvisorSystem:
 # Slack Bot Configuration
 app = App(token=Config.SLACK_BOT_TOKEN)
 
-def extract_stock(text):
-    # Extract stock name from text and convert to uppercase
-    stock_match = re.search(r'\b[A-Za-z]{1,5}\b', text)
-    return stock_match.group(0).upper() if stock_match else None
 
-def process_trading(stock, say):
+def extract_stock_and_lang(text):
+    # Remove the bot mention and any leading/trailing whitespace
+    cleaned_text = re.sub(r'<@[A-Z0-9]+>', '', text).strip()
+
+    # Split the cleaned text into words
+    words = cleaned_text.split()
+
+    # Extract stock symbol (1-5 alphabetic characters, case insensitive)
+    stock = None
+    if words:
+        stock_match = re.match(r'^[A-Za-z]{1,5}$', words[0], re.IGNORECASE)
+        if stock_match:
+            stock = stock_match.group(0).upper()
+
+    # Extract language code if present (2 lowercase alphabetic characters)
+    lang = 'en'  # Default to English
+    if len(words) > 1:
+        lang_match = re.match(r'^[A-Za-z]{2}$', words[-1], re.IGNORECASE)
+        if lang_match:
+            lang = lang_match.group(0).lower()
+
+    return stock, lang
+
+def process_trading(stock,lang, say):
     # Process stock trading analysis and send results
-    logger.info(f"Starting the stock trading analysis for {stock}")
+    logger.info(f"Starting the stock trading analysis for {stock} in language: {lang}")
     say(f"Processing analysis for {stock}...")
 
     try:
-        analyzer = AIStockAdvisorSystem(stock)
-        result, reason_kr, news, fgi, current_price, vix_index = analyzer.ai_stock_analysis()
+        analyzer = AIStockAdvisorSystem(stock, lang)
+        result, reason_translated, news, fgi, current_price, vix_index = analyzer.ai_stock_analysis()
 
         response = f"""AI Trading Decision for {stock}:
-        Decision: {result.decision}
-        Percentage: {result.percentage}%
-        Current Price: ${current_price:.2f}
-        Predicted NextDay Price: ${result.expected_next_day_price:.2f}
-        VIX INDEX: {vix_index}
-        Reason: {result.reason}
-        Reason_KO: {reason_kr}
-        Recent News:
-        {analyzer._format_news(news)}
+            Decision: {result.decision}
+            Percentage: {result.percentage}%
+            Current Price: ${current_price:.2f}
+            Predicted NextDay Price: ${result.expected_next_day_price:.2f}
 
-        Fear and Greed Index:
-        Value: {fgi['value']:.2f}
-        Description: {fgi['description']}
-        Last Update: {fgi['last_update']}"""
+            VIX INDEX: {vix_index}
+            Fear and Greed Index: {fgi['value']:.2f} => {fgi['description']}
+
+            Reason: {reason_translated}
+
+            Recent News:
+            {analyzer._format_news(news)}
+            """
 
         logger.info(f"Completed the stock trading analysis for {stock}")
         say(response)
@@ -745,13 +762,13 @@ def process_trading(stock, say):
 def handle_mention(event, say):
     # Handle app mention events
     logger.info(f"Received app mention event: {event}")
-    stock = extract_stock(event['text'])
+    stock, lang = extract_stock_and_lang(event['text'])
     if stock:
-        logger.info(f"Extracted stock from mention: {stock}")
-        process_trading(stock, say)
+        logger.info(f"Extracted stock: {stock}, language: {lang}")
+        process_trading(stock, lang, say)
     else:
         logger.warning("Could not find valid stock name in mention")
-        say("Please enter a valid stock symbol. For example: @YourBotName AAPL or @YourBotName aapl")
+        say("Please enter a valid stock symbol and optional language code. For example: @YourBotName AAPL or @YourBotName AAPL ko")
 
 @app.event("message")
 def handle_message(event, logger):
@@ -761,7 +778,7 @@ def handle_message(event, logger):
 def main():
     handler = SocketModeHandler(app, Config.SLACK_APP_TOKEN)
 
-    # Slack 이벤트 리스너 시작
+    # Start Slack Event Listener
     logger.info("Starting AI Stock Advisor")
     handler.start()
 
