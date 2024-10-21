@@ -2,6 +2,8 @@
 
 AI Stock Advisor is an advanced system that leverages artificial intelligence to analyze the stock market and suggest investment decisions. This system utilizes various data sources to perform comprehensive market analysis and uses OpenAI's GPT model to generate investment decisions.
 
+<img width="1124" alt="image" src="https://github.com/user-attachments/assets/eabc1e91-069f-4f5a-8b89-32f3ffe112fd">
+
 ## Key Features
 
 - Real-time stock price and chart data collection
